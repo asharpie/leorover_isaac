@@ -25,7 +25,15 @@ If you haven't moved it yet:
 2. Run `git init && git add . && git commit -m "Initial scaffolding"` inside.
 3. Push to a new GitHub repo (`gh repo create leorover_isaac --public ...`).
 
-Then follow [INSTALL.md](INSTALL.md) to set up WSL2 + Isaac Lab.
+Then follow [INSTALL.md](INSTALL.md) to set up a dual-boot Ubuntu 22.04
+install for Isaac Lab.
+
+**Note on platform choice:** the original plan was WSL2 + Isaac Lab, and
+when that didn't work, Docker on WSL2. Both turned out to be unworkable
+because NVIDIA's WSL graphics passthrough is broken on the target Windows
+build (Insider 26200.x). See [SETUP_HISTORY.md](SETUP_HISTORY.md) for the
+debugging story. Native Linux via dual-boot is the recommended (and only
+validated) path now.
 
 After install, follow [PORTING_ROADMAP.md](PORTING_ROADMAP.md) for the
 phase-by-phase port plan.
@@ -37,8 +45,9 @@ phase-by-phase port plan.
 ```
 leorover_isaac/
 ├── README.md                    ← you are here
-├── INSTALL.md                   ← WSL2 + Isaac Lab install steps
+├── INSTALL.md                   ← Ubuntu 22.04 dual-boot + Isaac Lab install
 ├── PORTING_ROADMAP.md           ← phase-by-phase port plan + concept mapping
+├── SETUP_HISTORY.md             ← what we tried, what didn't work, why
 ├── LICENSE                      ← MIT
 ├── pyproject.toml               ← Python package metadata
 ├── .gitignore                   ← Python / Isaac / generated USD ignores
