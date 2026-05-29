@@ -1,0 +1,63 @@
+# ─── Python ───────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.python-version
+
+# ─── Editors / OS ─────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ─── Isaac Sim / Lab artifacts ────────────────────────────────────────────
+# Caches NVIDIA writes during USD asset loading and shader compilation
+_isaac_sim_cache/
+.nv/
+*.usd@/
+*.shader_cache
+omniverse_cache/
+
+# Isaac Lab logs and outputs
+logs/
+runs/
+outputs/
+videos/
+checkpoints/
+
+# Hydra / wandb default dirs
+.hydra/
+wandb/
+multirun/
+
+# ─── Training data / models ───────────────────────────────────────────────
+# Keep the project lightweight; large models stay out of git
+*.pt
+*.pth
+*.onnx
+*.zip
+*.ckpt
+models/
+*.csv
+
+# ─── Generated USD assets ─────────────────────────────────────────────────
+# Source URDFs / DAEs ARE tracked; auto-generated USDs are not
+leorover_isaac/assets/**/*.usd
+leorover_isaac/assets/**/*.usda
+leorover_isaac/assets/**/*.usdc
+# Exception: hand-crafted reference USDs in source/ subdirs
+!leorover_isaac/assets/**/source/*.usd
+!leorover_isaac/assets/**/source/*.usda
+
+# ─── Local config overrides ───────────────────────────────────────────────
+.env
+config.local.*
+secrets.yaml

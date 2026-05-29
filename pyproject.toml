@@ -1,0 +1,41 @@
+# leorover_isaac — packaging stub
+#
+# This file declares the project as a proper Python package so that imports
+# like `from leorover_isaac.envs.leo_rover_terrain_env import LeoRoverTerrainEnv`
+# work after `pip install -e .` inside the Isaac Lab conda env.
+#
+# Dependencies are intentionally minimal — Isaac Sim, Isaac Lab, and PyTorch
+# come from the Isaac Lab install (see INSTALL.md), not from here. Adding them
+# as requirements would let pip clobber the carefully-versioned Isaac stack.
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leorover_isaac"
+version = "0.0.1"
+description = "Leo Rover RL on Isaac Lab (GPU-accelerated port of leoroverpybullet_share)."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Sharpie" }]
+
+# Runtime deps that DON'T conflict with Isaac Lab's pinned stack.
+# Anything that touches torch / numpy / gymnasium versioning belongs in
+# Isaac Lab's environment.yml, not here.
+dependencies = [
+    "pyyaml",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "black",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["leorover_isaac*"]
+exclude = ["tests*", "scripts*", "docs*"]
