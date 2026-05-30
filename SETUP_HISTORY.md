@@ -115,19 +115,53 @@ entirely on this machine.
 
 ---
 
-## Path 3 — Dual-boot Ubuntu 22.04 (chosen)
+## Path 3 — Dual-boot Ubuntu 22.04 (considered, deferred)
 
 Reasoning: native Linux has direct hardware access. No virtualization layer
 to translate between Windows and Linux GPU views. NVIDIA's drivers on
 Ubuntu are well-tested and Isaac Lab is developed against this exact
 configuration.
 
-Trade-off: must reboot to switch between Windows and Linux. For active
-Isaac Lab work, that's acceptable. For passive checking of email while
-training runs, it's not — but that's what phones are for.
+Trade-off: must reboot to switch between Windows and Linux. Mutually
+exclusive — can't run Isaac training on Ubuntu and a Windows game (e.g.
+Rocket League) at the same time. For Sharpie, who often plays Rocket
+League between or during PyBullet training runs, this constraint mattered.
 
-This is the validated path. See [INSTALL.md](INSTALL.md) for the
-step-by-step.
+Decision: dual-boot guide is written and ready ([INSTALL.md](INSTALL.md))
+in case the cloud path ever becomes impractical, but Path 4 (cloud) was
+chosen instead because it preserves the gaming-during-training workflow.
+
+---
+
+## Path 4 — Cloud GPU rental on RunPod (chosen)
+
+Reasoning: dual-boot's "one OS at a time" constraint conflicted with the
+desire to keep gaming + training going simultaneously. Cloud GPU sidesteps
+this entirely — training runs remotely on rented hardware in a data center,
+while the local Windows machine keeps doing whatever else.
+
+Trade-offs:
+
+- **Ongoing cost** (~$10–40/month part-time) instead of $0 marginal cost
+  of local hardware
+- **Internet dependency** — no offline work, can't train on the train
+- **~50–100 ms SSH latency** — invisible for training, noticeable only
+  for any interactive GUI work in Isaac Sim (which we won't be doing much
+  of anyway)
+- **First-time SSH learning curve** — small, novel if you've never used SSH
+
+In return:
+
+- Local Windows install stays exactly as it is, including all games
+- No disk partitioning risk
+- Training runs in parallel with whatever else the laptop is doing
+- Volume disk preserves work-in-progress across pod restarts
+- RunPod community templates skip the Isaac Sim install entirely
+
+This is the validated chosen path. See [CLOUD_SETUP.md](CLOUD_SETUP.md)
+for the step-by-step.
+
+---
 
 ---
 
