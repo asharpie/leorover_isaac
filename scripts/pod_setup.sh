@@ -1,5 +1,5 @@
 #!/bin/bash
-# pod_setup.sh — persistent boot script for RunPod
+# pod_setup.sh - persistent boot script for RunPod
 #
 # Lives on /workspace/pod_setup.sh (copied there once, then run by the
 # container's start command on every boot). Restores SSH host keys,
@@ -26,7 +26,18 @@ AUTHORIZED_KEYS_SRC="${WORKSPACE_SSH_DIR}/authorized_keys"
 
 mkdir -p "${WORKSPACE_SSH_DIR}" "${HOST_KEYS_DIR}"
 
-# ─── --init flag: capture current state into /workspace ───────────────────
+# Ensure openssh-server is installed (idempotent). On migration, RunPod
+# may pull a fresh container image that doesn't have it baked in.
+if ! command -v sshd >/dev/null 2>&1; then
+    echo "[pod_setup] openssh-server not found, installing..."
+    apt-get update >/dev/null 2>&1 || true
+    apt-get install -y openssh-server >/dev/null 2>&1 || {
+        echo "[pod_setup] WARNING: failed to install openssh-server. SSH will not work."
+        echo "[pod_setup]          Check if container has internet access for apt."
+    }
+fi
+
+# --- --init flag: capture current state into /workspace -------------------
 # Use this once interactively after a manual SSH setup, so the persistent
 # volume gets a snapshot of working host keys + authorized_keys.
 if [ "$1" = "--init" ]; then
@@ -50,7 +61,7 @@ if [ "$1" = "--init" ]; then
     exit 0
 fi
 
-# ─── normal boot: restore SSH state ───────────────────────────────────────
+# --- normal boot: restore SSH state ---------------------------------------
 
 # Restore host keys from persistent storage (or generate fresh if missing)
 if ls "${HOST_KEYS_DIR}"/ssh_host_*_key 1>/dev/null 2>&1; then
@@ -75,7 +86,7 @@ if [ -f "${AUTHORIZED_KEYS_SRC}" ]; then
     chmod 600 /root/.ssh/authorized_keys
     echo "[pod_setup] Restored authorized_keys from ${AUTHORIZED_KEYS_SRC}"
 else
-    echo "[pod_setup] WARNING: no ${AUTHORIZED_KEYS_SRC} to restore — SSH will refuse logins until you add it"
+    echo "[pod_setup] WARNING: no ${AUTHORIZED_KEYS_SRC} to restore - SSH will refuse logins until you add it"
 fi
 
 # Auto-cd into IsaacLab on shell login (re-add each boot since bashrc is wiped)

@@ -11,7 +11,9 @@ Equivalent to running run_experiment.py in a deployment/eval pass.
 """
 
 from __future__ import annotations
-import argparse, os
+import argparse, os, sys
+# Make the repo root importable regardless of launch method.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--task", default="Isaac-LeoRover-Mars-v0")

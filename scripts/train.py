@@ -27,6 +27,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
+
+# Make the repo root importable so `import config` / `import leorover_isaac`
+# resolve no matter how this is launched (CLI, GUI, with or without PYTHONPATH).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # ---- 1. CLI + AppLauncher (must come before importing isaac sim modules) ----
 parser = argparse.ArgumentParser(description="Train Leo Rover (Isaac Lab / rsl_rl PPO).")
