@@ -1,31 +1,52 @@
 """
 Tkinter launcher GUI for the Isaac Lab Leo Rover stack.
 
-Isaac-Lab analogue of the PyBullet `experiment_gui.py`. Pick a task, set the
-common knobs, override any `config.py` constant, and launch `scripts/train.py`
-(or the comparison script) in a new console — without editing files between runs.
+Runs on your LOCAL Windows desktop (Tk works natively — no X server / X11
+forwarding needed) and, on Launch, **SSHes the training command to the pod**.
+You pick a task, tweak any config, hit Launch, and a console pops up streaming
+the pod's training output. Untick "Run on remote pod" to instead launch locally
+(for a local Isaac install).
 
-How overrides reach the sim: the GUI serializes a dict to the
-`EXPERIMENT_OVERRIDES` environment variable. `config.py` (carried over verbatim
-from the PyBullet repo) reads that JSON at import and applies it to its module
-globals BEFORE the Isaac env/agent configs are built — so any reward weight,
-residual bound, ADR threshold, or terrain range you set here takes effect for
-that run. The free-form "Extra overrides (JSON)" box lets you change ANY config
-constant, not just the ones with form fields.
+How config overrides reach the sim: the GUI serializes a dict to the
+`EXPERIMENT_OVERRIDES` environment variable on the pod. `config.py` (carried
+over verbatim from the PyBullet repo) reads that JSON at import and applies it to
+its module globals BEFORE the Isaac env/agent configs are built — so any reward
+weight, residual bound, ADR threshold, or terrain range you set here takes
+effect for that run. The free-form "Extra overrides (JSON)" box lets you change
+ANY config constant, not just the ones with form fields.
 
-Launch command (default): `<isaac launcher> -p scripts/train.py --task ... --num_envs ...`
-Set the launcher to your install's `isaaclab` / `isaaclab.sh` (uses `-p` to run
-inside Isaac's python). Untick "use isaaclab -p" to call a plain python instead.
+Remote delivery is robust to quoting: the whole remote command is base64-encoded
+and decoded on the pod (`echo <b64> | base64 -d | bash -l`), so the JSON's quotes
+never get mangled by Windows/SSH. The new console uses `cmd /k`, so it stays open
+after training ends/crashes for you to read the output.
 """
 
 import os
 import sys
 import json
+import base64
+import shlex
 import subprocess
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
-import config  # carried-over single source of truth for defaults
+# Defaults come from config.py, but that imports torch (present on the pod, not
+# necessarily on your Windows desktop). Fall back to hardcoded defaults so the
+# GUI runs anywhere with just standard Python + tkinter. The POD's config.py is
+# the real source of truth at run time; these only seed the form fields.
+try:
+    import config
+except Exception:
+    from types import SimpleNamespace
+    config = SimpleNamespace(
+        TRAINING_TERRAIN_MIN=10.0, ADR_TERRAIN_MAX_LIMIT=100.0,
+        TRAINING_FRICTION_MIN=50.0, TRAINING_FRICTION_MAX=90.0,
+        USE_CAMERA_LOOKAHEAD=True, MAX_RESIDUAL_VELOCITY=0.15, MAX_RESIDUAL_OMEGA=0.30,
+        PPO_W_CTE=5.0, PPO_W_PROGRESS=10.0, PPO_W_EFFORT=0.5,
+        PPO_SUCCESS_BONUS=200.0, PPO_FAILURE_PENALTY=50.0,
+        ADR_TERRAIN_MAX_START=10.0, ADR_SUCCESS_THRESHOLD=0.70,
+        ADR_CTE_THRESHOLD=0.10, ADR_STEP_UP=3.0,
+    )
 
 
 TASKS = {
@@ -43,6 +64,7 @@ class IsaacExperimentGUI:
         root.resizable(True, True)
         self._build()
         self._on_task_change()
+        self._on_run_mode_change()
 
     # ------------------------------------------------------------------ #
     def _spin(self, parent, r, c, lo, hi, default, flt=False, inc=0.01):
@@ -51,6 +73,12 @@ class IsaacExperimentGUI:
                          **({"increment": inc} if flt else {}))
         sb.grid(row=r, column=c, sticky="w", padx=4, pady=2)
         var.widget = sb
+        return var
+
+    def _entry(self, parent, r, c, default, width=22):
+        var = tk.StringVar(value=default)
+        e = ttk.Entry(parent, textvariable=var, width=width)
+        e.grid(row=r, column=c, sticky="w", padx=4, pady=2)
         return var
 
     def _build(self):
@@ -65,24 +93,53 @@ class IsaacExperimentGUI:
                             command=self._on_task_change
                             ).grid(row=i // 2, column=i % 2, sticky="w", padx=12, pady=2)
 
-        # Isaac launch
-        lf = ttk.LabelFrame(main, text="Isaac launch", padding=8); lf.pack(fill="x", **pad)
-        ttk.Label(lf, text="Launcher:").grid(row=0, column=0, sticky="e")
-        self.launcher = tk.StringVar(value="isaaclab")
-        ttk.Entry(lf, textvariable=self.launcher, width=28).grid(row=0, column=1, sticky="w", padx=4)
-        self.use_dash_p = tk.BooleanVar(value=True)
-        ttk.Checkbutton(lf, text="use `isaaclab -p`", variable=self.use_dash_p).grid(row=0, column=2, sticky="w")
+        # ── Run location: Remote pod (SSH) vs Local ──
+        rf = ttk.LabelFrame(main, text="Run location", padding=8); rf.pack(fill="x", **pad)
+        self.run_remote = tk.BooleanVar(value=True)
+        ttk.Checkbutton(rf, text="Run on remote pod via SSH (uncheck = run locally)",
+                        variable=self.run_remote, command=self._on_run_mode_change
+                        ).grid(row=0, column=0, columnspan=4, sticky="w")
+
+        # SSH target (prefilled with your current pod — update IP/port after each migration)
+        self.ssh_frame = ttk.LabelFrame(main, text="SSH target (pod)", padding=8)
+        self.ssh_frame.pack(fill="x", **pad)
+        ttk.Label(self.ssh_frame, text="Host:").grid(row=0, column=0, sticky="e")
+        self.ssh_host = self._entry(self.ssh_frame, 0, 1, "69.30.85.81")
+        ttk.Label(self.ssh_frame, text="Port:").grid(row=0, column=2, sticky="e")
+        self.ssh_port = self._entry(self.ssh_frame, 0, 3, "22027", width=10)
+        ttk.Label(self.ssh_frame, text="User:").grid(row=1, column=0, sticky="e")
+        self.ssh_user = self._entry(self.ssh_frame, 1, 1, "root")
+        ttk.Label(self.ssh_frame, text="SSH key:").grid(row=1, column=2, sticky="e")
+        self.ssh_key = self._entry(self.ssh_frame, 1, 3, "~/.ssh/id_ed25519", width=28)
+        ttk.Label(self.ssh_frame, text="Remote project dir:").grid(row=2, column=0, sticky="e")
+        self.remote_proj = self._entry(self.ssh_frame, 2, 1, "/workspace/leorover_isaac", width=34)
+        ttk.Label(self.ssh_frame, text="Remote python:").grid(row=2, column=2, sticky="e")
+        self.remote_py = self._entry(self.ssh_frame, 2, 3, "python", width=28)
+        ttk.Label(self.ssh_frame, text="Pre-command (optional):").grid(row=3, column=0, sticky="e")
+        self.remote_pre = self._entry(self.ssh_frame, 3, 1, "", width=60)
+        ttk.Label(self.ssh_frame, text="e.g. conda activate ...", foreground="gray"
+                  ).grid(row=3, column=3, sticky="w")
+
+        # Isaac launch (timing + LOCAL launcher)
+        lf = ttk.LabelFrame(main, text="Run settings", padding=8); lf.pack(fill="x", **pad)
+        ttk.Label(lf, text="num_envs:").grid(row=0, column=0, sticky="e")
+        self.num_envs = self._spin(lf, 0, 1, 1, 65536, 4096)
+        ttk.Label(lf, text="max_iterations:").grid(row=0, column=2, sticky="e")
+        self.max_iters = self._spin(lf, 0, 3, 1, 1000000, 30000)
+        ttk.Label(lf, text="seed:").grid(row=1, column=0, sticky="e")
+        self.seed = self._spin(lf, 1, 1, 0, 2**31 - 1, 42)
         self.headless = tk.BooleanVar(value=True)
-        ttk.Checkbutton(lf, text="headless", variable=self.headless).grid(row=0, column=3, sticky="w")
-        ttk.Label(lf, text="num_envs:").grid(row=1, column=0, sticky="e")
-        self.num_envs = self._spin(lf, 1, 1, 1, 65536, 4096)
-        ttk.Label(lf, text="max_iterations:").grid(row=1, column=2, sticky="e")
-        self.max_iters = self._spin(lf, 1, 3, 1, 1000000, 30000)
-        ttk.Label(lf, text="seed:").grid(row=2, column=0, sticky="e")
-        self.seed = self._spin(lf, 2, 1, 0, 2**31 - 1, 42)
+        ttk.Checkbutton(lf, text="headless", variable=self.headless).grid(row=1, column=2, sticky="w")
+        # Local-only launcher fields
+        self.local_launcher = ttk.Label(lf, text="Local launcher:")
+        self.local_launcher.grid(row=2, column=0, sticky="e")
+        self.launcher = self._entry(lf, 2, 1, "isaaclab")
+        self.use_dash_p = tk.BooleanVar(value=True)
+        self.use_dash_p_cb = ttk.Checkbutton(lf, text="use `isaaclab -p` (local)", variable=self.use_dash_p)
+        self.use_dash_p_cb.grid(row=2, column=2, sticky="w")
 
         # Checkpoint (compare)
-        self.ckpt_frame = ttk.LabelFrame(main, text="Checkpoint (for Compare)", padding=8)
+        self.ckpt_frame = ttk.LabelFrame(main, text="Checkpoint (for Compare — pod path if remote)", padding=8)
         self.ckpt_frame.pack(fill="x", **pad)
         self.ckpt = tk.StringVar(value="")
         ttk.Entry(self.ckpt_frame, textvariable=self.ckpt, width=60).grid(row=0, column=0, sticky="ew", padx=4)
@@ -107,17 +164,17 @@ class IsaacExperimentGUI:
         self.res_w = self._spin(ef, 3, 3, 0, 5, config.MAX_RESIDUAL_OMEGA, flt=True)
 
         # Reward overrides
-        rf = ttk.LabelFrame(main, text="Reward weights (config overrides)", padding=8); rf.pack(fill="x", **pad)
-        ttk.Label(rf, text="W_CTE:").grid(row=0, column=0, sticky="e")
-        self.w_cte = self._spin(rf, 0, 1, 0, 100, config.PPO_W_CTE, flt=True, inc=0.5)
-        ttk.Label(rf, text="W_PROGRESS:").grid(row=0, column=2, sticky="e")
-        self.w_prog = self._spin(rf, 0, 3, 0, 100, config.PPO_W_PROGRESS, flt=True, inc=0.5)
-        ttk.Label(rf, text="W_EFFORT:").grid(row=1, column=0, sticky="e")
-        self.w_eff = self._spin(rf, 1, 1, 0, 10, config.PPO_W_EFFORT, flt=True)
-        ttk.Label(rf, text="SUCCESS_BONUS:").grid(row=1, column=2, sticky="e")
-        self.succ = self._spin(rf, 1, 3, 0, 1000, config.PPO_SUCCESS_BONUS, flt=True, inc=10)
-        ttk.Label(rf, text="FAILURE_PENALTY:").grid(row=2, column=0, sticky="e")
-        self.fail = self._spin(rf, 2, 1, 0, 1000, config.PPO_FAILURE_PENALTY, flt=True, inc=10)
+        rwf = ttk.LabelFrame(main, text="Reward weights (config overrides)", padding=8); rwf.pack(fill="x", **pad)
+        ttk.Label(rwf, text="W_CTE:").grid(row=0, column=0, sticky="e")
+        self.w_cte = self._spin(rwf, 0, 1, 0, 100, config.PPO_W_CTE, flt=True, inc=0.5)
+        ttk.Label(rwf, text="W_PROGRESS:").grid(row=0, column=2, sticky="e")
+        self.w_prog = self._spin(rwf, 0, 3, 0, 100, config.PPO_W_PROGRESS, flt=True, inc=0.5)
+        ttk.Label(rwf, text="W_EFFORT:").grid(row=1, column=0, sticky="e")
+        self.w_eff = self._spin(rwf, 1, 1, 0, 10, config.PPO_W_EFFORT, flt=True)
+        ttk.Label(rwf, text="SUCCESS_BONUS:").grid(row=1, column=2, sticky="e")
+        self.succ = self._spin(rwf, 1, 3, 0, 1000, config.PPO_SUCCESS_BONUS, flt=True, inc=10)
+        ttk.Label(rwf, text="FAILURE_PENALTY:").grid(row=2, column=0, sticky="e")
+        self.fail = self._spin(rwf, 2, 1, 0, 1000, config.PPO_FAILURE_PENALTY, flt=True, inc=10)
 
         # ADR overrides
         af = ttk.LabelFrame(main, text="ADR curriculum (config overrides)", padding=8); af.pack(fill="x", **pad)
@@ -137,9 +194,10 @@ class IsaacExperimentGUI:
         self.extra.insert("1.0", "{}")
         self.extra.pack(fill="both", expand=True)
 
-        # Launch
+        # Buttons
         bf = ttk.Frame(main); bf.pack(fill="x", pady=10)
         ttk.Button(bf, text="▶  Launch", command=self._launch).pack(side="right", padx=8)
+        ttk.Button(bf, text="Show command", command=self._show_command).pack(side="right", padx=4)
         self.status = tk.StringVar(value="Ready")
         ttk.Label(bf, textvariable=self.status, foreground="gray").pack(side="left", padx=8)
 
@@ -157,14 +215,21 @@ class IsaacExperimentGUI:
         else:
             self.ckpt_frame.pack_forget()
 
-    # ------------------------------------------------------------------ #
-    def _launch(self):
-        kind, task_id = TASKS[self.task_var.get()]
-        if self.terr_min.get() > self.terr_max.get():
-            messagebox.showerror("Invalid", "Terrain min > max"); return
-        if self.fric_min.get() > self.fric_max.get():
-            messagebox.showerror("Invalid", "Friction min > max"); return
+    def _on_run_mode_change(self, *_):
+        # SSH fields stay visible (harmless in local mode); just grey out the
+        # local-only launcher toggle when running remotely.
+        state = "disabled" if self.run_remote.get() else "normal"
+        try:
+            self.use_dash_p_cb.configure(state=state)
+        except Exception:
+            pass
 
+    # ------------------------------------------------------------------ #
+    def _collect_overrides(self):
+        if self.terr_min.get() > self.terr_max.get():
+            messagebox.showerror("Invalid", "Terrain min > max"); return None
+        if self.fric_min.get() > self.fric_max.get():
+            messagebox.showerror("Invalid", "Friction min > max"); return None
         overrides = {
             "TRAINING_TERRAIN_MIN": self.terr_min.get(),
             "TRAINING_TERRAIN_MAX": self.terr_max.get(),
@@ -184,49 +249,124 @@ class IsaacExperimentGUI:
             "ADR_CTE_THRESHOLD": self.adr_cte.get(),
             "ADR_STEP_UP": self.adr_step.get(),
         }
-        # merge free-form JSON
         try:
             extra = json.loads(self.extra.get("1.0", "end").strip() or "{}")
             overrides.update(extra)
         except json.JSONDecodeError as e:
-            messagebox.showerror("Bad JSON", f"Extra overrides not valid JSON:\n{e}"); return
+            messagebox.showerror("Bad JSON", f"Extra overrides not valid JSON:\n{e}"); return None
+        return overrides
 
-        here = os.path.dirname(os.path.abspath(__file__))
+    def _script_and_args(self, kind, task_id, proj):
+        """Return (script_path, args_string) for the remote/local command.
+
+        `proj` is the project root (remote path if running on the pod).
+        """
         if kind == "compare":
             if not self.ckpt.get().strip():
-                messagebox.showerror("Missing", "Compare needs a checkpoint."); return
-            script = os.path.join(here, "scripts", "compare_hybrid_vs_lqr.py")
-            args = ["--checkpoint", self.ckpt.get().strip(), "--num_envs", str(self.num_envs.get())]
+                messagebox.showerror("Missing", "Compare needs a checkpoint path."); return None, None
+            script = f"{proj}/scripts/compare_hybrid_vs_lqr.py"
+            args = f"--checkpoint {shlex.quote(self.ckpt.get().strip())} --num_envs {self.num_envs.get()}"
         else:
-            script = os.path.join(here, "scripts", "train.py")
-            args = ["--task", task_id, "--num_envs", str(self.num_envs.get()),
-                    "--max_iterations", str(self.max_iters.get()), "--seed", str(self.seed.get())]
+            script = f"{proj}/scripts/train.py"
+            args = (f"--task {task_id} --num_envs {self.num_envs.get()} "
+                    f"--max_iterations {self.max_iters.get()} --seed {self.seed.get()}")
             if self.headless.get():
-                args.append("--headless")
+                args += " --headless"
+        return script, args
 
-        # build command (isaaclab -p <script>  OR  <launcher> <script>)
-        launcher = self.launcher.get().strip() or "isaaclab"
-        if self.use_dash_p.get():
-            cmd = [launcher, "-p", script] + args
+    def _remote_inner(self, overrides, kind, task_id):
+        """The bash command that runs ON THE POD."""
+        proj = self.remote_proj.get().strip().rstrip("/")
+        py = self.remote_py.get().strip() or "python"
+        pre = self.remote_pre.get().strip()
+        script, args = self._script_and_args(kind, task_id, proj)
+        if script is None:
+            return None
+        j = json.dumps(overrides).replace("'", "'\\''")   # safe inside single quotes
+        prefix = (pre + " && ") if pre else ""
+        return (f"cd {proj} && {prefix}"
+                f"EXPERIMENT_OVERRIDES='{j}' PYTHONPATH={proj} "
+                f"{py} {script} {args}")
+
+    def _remote_ssh_argv(self, inner):
+        """Wrap the inner bash command for robust delivery over SSH (base64)."""
+        b64 = base64.b64encode(inner.encode()).decode()
+        key = os.path.expanduser(self.ssh_key.get().strip())
+        host = self.ssh_host.get().strip()
+        port = str(self.ssh_port.get()).strip()
+        user = self.ssh_user.get().strip() or "root"
+        remote = f"echo {b64} | base64 -d | bash -l"
+        return ["ssh", "-tt", "-i", key, "-p", port, f"{user}@{host}", remote]
+
+    # ------------------------------------------------------------------ #
+    def _show_command(self):
+        ov = self._collect_overrides()
+        if ov is None:
+            return
+        kind, task_id = TASKS[self.task_var.get()]
+        if self.run_remote.get():
+            inner = self._remote_inner(ov, kind, task_id)
+            if inner is None:
+                return
+            messagebox.showinfo(
+                "Remote command (runs on the pod)",
+                inner + "\n\n(Sent base64-encoded over SSH so quoting can't break.)")
         else:
-            cmd = [launcher, script] + args
+            here = os.path.dirname(os.path.abspath(__file__))
+            script, args = self._script_and_args(kind, task_id, here)
+            if script is None:
+                return
+            launcher = self.launcher.get().strip() or "isaaclab"
+            dash = "-p " if self.use_dash_p.get() else ""
+            messagebox.showinfo("Local command", f"{launcher} {dash}{script} {args}")
 
+    def _launch(self):
+        ov = self._collect_overrides()
+        if ov is None:
+            return
+        kind, task_id = TASKS[self.task_var.get()]
+
+        if self.run_remote.get():
+            # ---- remote: SSH the command to the pod ----
+            inner = self._remote_inner(ov, kind, task_id)
+            if inner is None:
+                return
+            ssh_argv = self._remote_ssh_argv(inner)
+            self.status.set(f"SSH-launching {task_id} on {self.ssh_host.get()} …"); self.root.update()
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["cmd", "/k"] + ssh_argv,
+                                     creationflags=subprocess.CREATE_NEW_CONSOLE)
+                else:
+                    subprocess.Popen(ssh_argv)
+                self.status.set(f"{task_id} launched on pod (new console). Close it to stop watching.")
+            except FileNotFoundError:
+                messagebox.showerror("Launch failed", "Could not run 'ssh'. Is OpenSSH installed/on PATH?")
+                self.status.set("Launch failed")
+            return
+
+        # ---- local: run on this machine (needs a local Isaac install) ----
+        here = os.path.dirname(os.path.abspath(__file__))
+        script, args_str = self._script_and_args(kind, task_id, here)
+        if script is None:
+            return
+        launcher = self.launcher.get().strip() or "isaaclab"
+        argv = ([launcher, "-p", script] if self.use_dash_p.get() else [launcher, script]) + shlex.split(args_str)
         env = os.environ.copy()
-        env["EXPERIMENT_OVERRIDES"] = json.dumps(overrides)
+        env["EXPERIMENT_OVERRIDES"] = json.dumps(ov)
         env["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-        self.status.set(f"Launching {task_id} …"); self.root.update()
+        self.status.set(f"Launching {task_id} locally …"); self.root.update()
         try:
             if sys.platform == "win32":
-                subprocess.Popen(["cmd", "/k"] + cmd, env=env, cwd=here,
+                subprocess.Popen(["cmd", "/k"] + argv, env=env, cwd=here,
                                  creationflags=subprocess.CREATE_NEW_CONSOLE)
             else:
-                subprocess.Popen(cmd, env=env, cwd=here)
-            self.status.set(f"{task_id} launched (overrides applied)")
+                subprocess.Popen(argv, env=env, cwd=here)
+            self.status.set(f"{task_id} launched locally (overrides applied)")
         except FileNotFoundError:
             messagebox.showerror("Launch failed",
-                                 f"Could not run '{launcher}'. Set the Launcher field to your "
-                                 f"Isaac Lab launcher (e.g. the full path to isaaclab / isaaclab.sh).")
+                                 f"Could not run '{launcher}'. Set the Local launcher field to your "
+                                 f"Isaac Lab launcher (e.g. full path to isaaclab / isaaclab.sh).")
             self.status.set("Launch failed")
 
 

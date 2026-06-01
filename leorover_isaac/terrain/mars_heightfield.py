@@ -91,9 +91,10 @@ def mars_height_field(difficulty: float, cfg) -> np.ndarray:
     vertical_scale (m), plus our extras `intensity_min`, `intensity_max`,
     and optional `seed`.
     """
-    intensity_min = float(getattr(cfg, "intensity_min", 0.0))
-    intensity_max = float(getattr(cfg, "intensity_max", 100.0))
-    intensity = intensity_min + difficulty * (intensity_max - intensity_min)
+    # difficulty in [0,1] -> terrain intensity 0-100% (same difficulty scaling the
+    # built-in sub-terrains use; the ADR ceiling limits which difficulty rows are
+    # actually sampled at run time, so this is the per-patch steepness).
+    intensity = float(difficulty) * 100.0
 
     horizontal_scale = float(getattr(cfg, "horizontal_scale", CELL_SIZE))
     vertical_scale = float(getattr(cfg, "vertical_scale", 0.005))
@@ -216,9 +217,7 @@ def make_mars_terrain_cfg(
         @dataclass
         class MarsHfCfg(HfTerrainBaseCfg):
             function: object = staticmethod(decorated)
-            intensity_min: float = intensity_min
-            intensity_max: float = intensity_max
-            seed: int | None = None
+            seed: object = None
 
         sub_terrains["mars_hills"] = MarsHfCfg(proportion=0.30, **common)
     except Exception as exc:  # pragma: no cover
