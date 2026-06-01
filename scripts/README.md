@@ -2,7 +2,8 @@
 
 | script | runs on | purpose |
 |--------|---------|---------|
-| `connect-runpod.ps1` | Windows / PowerShell | Auto-update `~/.ssh/config` from RunPod API + optionally launch VS Code Remote-SSH |
+| `connect-runpod.ps1` | Windows / PowerShell | Session starter: auto-start pod via API, update `~/.ssh/config`, launch VS Code Remote-SSH |
+| `stop-runpod.ps1`    | Windows / PowerShell | Session ender: stop the pod via API, halt GPU billing |
 | `pod_setup.sh` | Linux / on the pod | Boot script: restore SSH host keys, authorized_keys, bashrc from `/workspace` on every container start |
 | `train.py` | Linux / on the pod | Phase 2 stub: wrapper around Isaac Lab's `rsl_rl/train.py` with leorover defaults |
 | `eval.py` | Linux / on the pod | Phase 2 stub: load a checkpoint, run N episodes, output CSV matching PyBullet schema |
@@ -52,8 +53,8 @@ optionally launches VS Code Remote-SSH targeting the pod.
 
 ### Per-session usage
 
-After clicking Start in the RunPod dashboard and waiting ~90 seconds for
-the pod to boot:
+The script handles pod-start automatically now — no need to click
+Start in the dashboard first.
 
 ```powershell
 cd C:\Users\Aaron\Downloads\leorover_isaac\scripts
@@ -62,13 +63,65 @@ cd C:\Users\Aaron\Downloads\leorover_isaac\scripts
 
 That single command:
 
-- Queries RunPod's API for current pod IP/port
-- Updates `~/.ssh/config`'s `Host runpod` entry
+- Starts the pod via API if it's currently STOPPED
+- Polls until pod is RUNNING (typically 60–120 seconds for cold start)
+- Updates `~/.ssh/config`'s `Host runpod` entry with the new IP/port
 - Launches VS Code with Remote-SSH already targeting the pod
 - Drops you into `/workspace/IsaacLab`
 
 Skip `-LaunchVSCode` if you only want the config updated (e.g., to use
 `ssh runpod` from PowerShell first for `git pull` or similar).
+
+Pass `-NoStart` if you don't want it to auto-start a stopped pod (useful
+for sanity checks):
+
+```powershell
+.\connect-runpod.ps1 -NoStart      # just update config, error if pod is stopped
+```
+
+### Ending a session
+
+```powershell
+cd C:\Users\Aaron\Downloads\leorover_isaac\scripts
+.\stop-runpod.ps1
+```
+
+That:
+
+- Confirms (pass `-Force` to skip the prompt — used in the desktop shortcut)
+- Sends stop API call
+- GPU billing halts immediately (still pay ~$2-3/month for the volume)
+
+Your `/workspace` data is preserved — next `connect-runpod.ps1` brings
+the pod back exactly where you left off.
+
+### Desktop shortcuts (one-click start, one-click stop)
+
+For zero-typing workflow:
+
+**Start session shortcut:**
+
+1. Right-click desktop → New → Shortcut
+2. Target:
+   ```
+   powershell.exe -ExecutionPolicy Bypass -File "C:\Users\Aaron\Downloads\leorover_isaac\scripts\connect-runpod.ps1" -LaunchVSCode
+   ```
+3. Name: `Start RunPod Session`
+
+**Stop session shortcut:**
+
+1. Right-click desktop → New → Shortcut
+2. Target:
+   ```
+   powershell.exe -ExecutionPolicy Bypass -File "C:\Users\Aaron\Downloads\leorover_isaac\scripts\stop-runpod.ps1" -Force
+   ```
+3. Name: `Stop RunPod Session`
+
+Now your daily flow is: double-click **Start RunPod Session** → wait
+~90 sec → VS Code opens connected → work → double-click **Stop RunPod
+Session** → done.
+
+Pin both to your taskbar for fastest access.
 
 ### Troubleshooting
 

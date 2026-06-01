@@ -178,6 +178,13 @@ over exposed TCP**. You'll see a command like:
 ssh root@123.45.67.89 -p 12345 -i ~/.ssh/id_ed25519
 ```
 
+**IMPORTANT — IP and port change every time you Stop/Start a pod.** If you
+stop a pod and start it again later, you must go back to the dashboard
+and copy the new SSH command. The old one will fail with `Connection
+refused`. Your data on the persistent volume survives the restart, but
+the pod's network identity is fresh each time. This is one of the more
+common surprises for new RunPod users.
+
 Copy that.
 
 ### 3.2 Connect from PowerShell
@@ -292,14 +299,27 @@ pods running. Here's the discipline that keeps costs reasonable.
 billing you. From the RunPod dashboard:
 
 - **Stop the pod**: stops the GPU billing immediately. Container disk is
-  wiped, but `/workspace` volume disk persists (charges ~$2-3/month).
-  Next launch: pod boots in 1-2 minutes with all your code intact.
+  wiped (including any pip-installed packages!), but `/workspace` volume
+  disk persists (charges ~$2-3/month). Next launch: pod boots in 1-2
+  minutes with files on `/workspace` intact but a fresh container layer.
 - **Terminate the pod**: deletes everything including container. Cheapest
   but you lose any uncommitted state outside `/workspace`. Volume disk
   is separate and still persists.
 
 Use **Stop**, not **Terminate**, for routine sessions. Use Terminate
 only when you're done with a project entirely.
+
+**CRITICAL — Stop wipes the container layer, including Python packages.**
+When you Stop a pod, anything installed via `pip install` or `apt install`
+on the container's root filesystem (the default install location) gets
+wiped. Only `/workspace` survives. So after a Stop/Start cycle, you'll
+hit errors like `No such file or directory: '_isaac_sim/python.sh'` —
+that's the install being gone, not your data.
+
+**The fix is to immediately save a custom template after your first
+successful install** (see Section 5.2 below). With a saved template, the
+Isaac Sim install is baked into the container image, and future pods boot
+ready-to-train.
 
 ### 5.2 Save a custom template once Isaac Sim works
 

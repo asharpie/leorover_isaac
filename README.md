@@ -5,9 +5,19 @@ GPU-accelerated Isaac Lab port of the Leo Rover RL stack. Sibling repo to
 remains the production codebase for the URCA paper and any near-term work;
 this repo is the long-horizon successor.
 
-**Status:** scaffolding only. No working code yet. The directory tree,
-documentation, and stub files exist so the project has a defined shape
-before any phase-1 work begins.
+**Status:** core port implemented (Phases 1–4 + logging), pending on-GPU
+validation. The previously-empty stubs are now filled with real, vectorized
+implementations: the Mars terrain generator, the torch `VectorizedLQR`
+controller, the `DirectRLEnv` base env + the flat/Mars/hybrid tasks, gym
+registration, the rsl_rl PPO configs (v33.9 hyperparameters), the
+PyBullet-schema CSV recorder, and train/play/compare scripts. The engine-agnostic
+logic (paths, terrain stats, ADR curriculum, `config.py`, and the
+`evaluate_training.py` analysis GUI) is carried over verbatim and shared with the
+PyBullet repo. See **[MIGRATION_NOTES.md](MIGRATION_NOTES.md)** for the complete
+file-by-file map, feature-parity checklist, known divergences, and the short
+remaining-work list to first training run. Runtime has NOT been validated in this
+environment (no local GPU); validate on your Isaac machine / RunPod GPU starting
+with the Flat smoke test.
 
 ---
 

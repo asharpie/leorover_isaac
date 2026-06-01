@@ -23,20 +23,22 @@ __version__ = "0.0.1"
 def _register_tasks():
     """Register all gym tasks defined in this package.
 
-    Called once at import time. Tasks are added incrementally as their
-    corresponding port phase is completed. For now this is a no-op — the
-    task files exist as stubs.
+    Called once at import time. Registers:
+      Isaac-LeoRover-Flat-v0         (pure PPO, flat ground — smoke test)
+      Isaac-LeoRover-Mars-v0         (pure PPO, Mars terrain — train_ppo)
+      Isaac-LeoRover-Mars-Hybrid-v0  (LQR + residual — train_hybrid_ppo)
     """
-    # Phase 2: Isaac-LeoRover-Flat-v0
-    # Phase 3: Isaac-LeoRover-Mars-v0
-    # Phase 4: Isaac-LeoRover-Mars-Hybrid-v0
-    pass
+    from leorover_isaac.tasks import register_tasks
+    register_tasks()
 
 
 # Guard the import so importing leorover_isaac in a non-Isaac environment
-# (e.g. running unit tests outside the conda env) still works.
+# (e.g. running unit tests outside the conda env) still works. We attempt
+# registration whenever gymnasium is available; the env classes themselves
+# only need Isaac Lab when actually instantiated.
 try:
-    import isaaclab  # noqa: F401
     _register_tasks()
-except ImportError:
-    pass
+except Exception as _exc:  # pragma: no cover
+    import os as _os
+    if _os.environ.get("LEOROVER_DEBUG"):
+        print(f"[leorover_isaac] task registration deferred: {_exc}")

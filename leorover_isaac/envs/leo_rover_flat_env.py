@@ -1,45 +1,54 @@
-"""leo_rover_flat_env.py — Phase 2 stub.
-
-Minimal Isaac Lab env: rover on a flat ground plane, no terrain, no LQR
-baseline. The purpose of this env is to validate the data path end-to-end
-before introducing complexity. If training PPO on this can't learn to
-follow a straight line, none of the later phases will work either.
+# leo_rover_flat_env.py
+"""
+LeoRoverFlatEnv — Phase 2: rover on a flat ground plane, pure PPO, no camera.
 
 PyBullet equivalent: MyEnv2(terrain_intensity=0.0, use_lqr_baseline=False,
-use_pure_ppo_reward=False, use_camera_lookahead=False).
+use_pure_ppo_reward=True, use_camera_lookahead=False).
 
-TODO (Phase 2):
-  - Implement _setup_scene with flat GroundPlane and one rover articulation
-  - Implement _pre_physics_step / _apply_action mapping [v, omega] action
-    to per-wheel velocities via the unicycle inverse kinematics
-  - Implement _get_observations returning [cte, heading_err, vx, vy, omega_z,
-    distance_to_goal] as a [num_envs, 6] tensor
-  - Implement _get_rewards returning -cte (placeholder, swap for real reward
-    later)
-  - Implement _get_dones with timeout (1024 steps) and goal-reached
-    (distance < 0.5 m) conditions
-  - Implement _reset_idx randomizing rover spawn pose
-
-This file is intentionally a stub so the package imports cleanly even
-before the port begins.
+This is the simplest task — used to validate the data path (action -> wheels ->
+motion -> obs -> reward) before introducing terrain. Observation is the 9D pure
+state vector [cte, heading_err, fwd_vel, lat_vel, wp_dx_b, wp_dy_b, gx, gy, gz].
+All reward/termination logic lives in LeoRoverBaseEnv.
 """
 
 from __future__ import annotations
 
-# Real implementation will import:
-#   from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
-#   from isaaclab.scene import InteractiveSceneCfg
-#   from isaaclab.assets import ArticulationCfg
-#   from isaaclab.sim import SimulationCfg
-#   import torch
+from leorover_isaac.envs.leo_rover_base_env import LeoRoverBaseEnv, LeoRoverBaseEnvCfg, _ISAAC
 
-__all__ = ["LeoRoverFlatEnv"]
+__all__ = ["LeoRoverFlatEnv", "LeoRoverFlatEnvCfg"]
+
+if _ISAAC:
+    import isaaclab.sim as sim_utils
+    from isaaclab.terrains import TerrainImporterCfg
+    from isaaclab.utils import configclass
+    from leorover_isaac.assets.leo_rover import LEO_ROVER_CFG
+
+    @configclass
+    class LeoRoverFlatEnvCfg(LeoRoverBaseEnvCfg):
+        observation_space: int = 9
+        episode_length_s: float = 400.0   # 2000 policy steps @ 0.2 s (matches MyEnv2 cap)
+        use_lqr_baseline: bool = False
+        use_camera_lookahead: bool = False
+        use_mars_terrain: bool = False
+
+        def __post_init__(self):
+            if hasattr(super(), "__post_init__"):
+                super().__post_init__()
+            self.robot = LEO_ROVER_CFG.replace(prim_path="/World/envs/env_.*/Robot")
+            self.terrain = TerrainImporterCfg(
+                prim_path="/World/ground",
+                terrain_type="plane",
+                collision_group=-1,
+                physics_material=sim_utils.RigidBodyMaterialCfg(
+                    friction_combine_mode="multiply",
+                    restitution_combine_mode="multiply",
+                    static_friction=1.0,
+                    dynamic_friction=1.0,
+                ),
+                debug_vis=False,
+            )
 
 
-class LeoRoverFlatEnv:
-    """Stub for Phase 2 — see module docstring."""
-
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError(
-            "LeoRoverFlatEnv is a Phase 2 stub. See PORTING_ROADMAP.md."
-        )
+class LeoRoverFlatEnv(LeoRoverBaseEnv):
+    """Flat-ground pure-PPO task (see module docstring)."""
+    pass
