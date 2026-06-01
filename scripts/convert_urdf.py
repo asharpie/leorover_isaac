@@ -77,9 +77,27 @@ def main():
     try:
         cfg = UrdfConverterCfg(**cfg_kwargs)
     except TypeError:
-        # Older field names
+        # Older field names (pre-5.x)
         cfg_kwargs.pop("merge_fixed_joints", None)
         cfg = UrdfConverterCfg(**cfg_kwargs, merge_joints=True)  # type: ignore
+
+    # Isaac Sim 5.x makes joint_drive (with gains.stiffness/damping) a REQUIRED
+    # field. Fill it in on the default joint_drive object so we don't depend on
+    # the exact nested class names. Wheels are velocity-controlled; the
+    # ArticulationCfg actuators override these at runtime, so these import-time
+    # gains just satisfy the converter's validator.
+    jd = getattr(cfg, "joint_drive", None)
+    if jd is not None:
+        try:
+            jd.target_type = "velocity"
+        except Exception:
+            pass
+        gains = getattr(jd, "gains", None)
+        if gains is not None:
+            if hasattr(gains, "stiffness"):
+                gains.stiffness = 0.0
+            if hasattr(gains, "damping"):
+                gains.damping = 100.0
 
     converter = UrdfConverter(cfg)
     print(f"[convert_urdf] USD written to: {converter.usd_path}")
