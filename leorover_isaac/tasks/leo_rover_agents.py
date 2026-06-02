@@ -14,8 +14,12 @@ difference is called out inline:
     rsl_rl's MLP actor-critic; rsl_rl is far more stable at this scale (proper
     obs normalization + GPU advantage). Noted as a known, accepted divergence
     (PORTING_ROADMAP.md "What to NOT port").
-  * SafeMlpPolicy log_std clamp: rsl_rl bounds exploration via init_noise_std +
-    its own KL-adaptive schedule; the v31 clamp isn't needed.
+  * SafeMlpPolicy log_std clamp: reproduced via noise_std_type="log". rsl-rl-lib
+    defaults to "scalar" (std is a raw learnable parameter that a gradient step
+    CAN push below zero -> `RuntimeError: normal expects all elements of std >=
+    0.0`, exactly the v31 log_std-runaway failure). "log" parameterizes
+    std = exp(log_std), so it is strictly positive and can never crash — the
+    direct rsl_rl analogue of the SafeMlpPolicy clamp.
 
 Everything that DOES translate (gamma, gae lambda, clip, entropy, lr, epochs,
 value loss coef, max grad norm, net arch) is copied from config.py verbatim.
@@ -57,6 +61,10 @@ if _RSL:
 
         policy = RslRlPpoActorCriticCfg(
             init_noise_std=0.37,                  # = exp(PPO_LOG_STD_INIT=-1.0), the v31 init
+            noise_std_type="log",                 # std=exp(log_std): strictly >0, cannot crash.
+                                                  # (default "scalar" let std go negative ->
+                                                  #  RuntimeError at iter 4247. This is the v31
+                                                  #  SafeMlpPolicy log_std clamp, rsl_rl-style.)
             actor_obs_normalization=True,         # == PyBullet VecNormalize(norm_obs=True)
             critic_obs_normalization=True,
             actor_hidden_dims=[256, 256],         # PPO_POLICY_KWARGS net_arch
