@@ -104,13 +104,15 @@ ADR_COOLDOWN_EPISODES = 30       # 30 eps cooldown — lets VecNormalize adapt a
 # from ~8 terrain types (Mars hills, rough, slopes, dunes, obstacles, stairs),
 # each with its own RNG draw. ROWS is the difficulty/ADR axis. With caching on,
 # the bank is generated ONCE and reused (fast subsequent runs).
-#   * Start small for bring-up (e.g. ROWS=10, VARIATIONS=20 -> 200 patches).
-#   * Scale up for an exhaustive bank (e.g. VARIATIONS=100 -> 2000 patches);
-#     first-run generation is numpy-vectorized so it's seconds-to-minutes, then
-#     cached. Push as far as your GPU memory allows; dial back if terrain baking OOMs.
-TERRAIN_NUM_DIFFICULTY_ROWS = 10
-TERRAIN_NUM_VARIATIONS = 20      # 10*20 = 200 patches default; raise to 100 for 2000
-TERRAIN_USE_CACHE = True         # generate the bank once, cache to disk, reuse
+#   * Default below is the EXHAUSTIVE bank: ROWS=20 * VARIATIONS=100 = 2000 patches.
+#   * For a fast bring-up run, dial these down via EXPERIMENT_OVERRIDES, e.g.
+#     {"TERRAIN_NUM_DIFFICULTY_ROWS": 10, "TERRAIN_NUM_VARIATIONS": 10}  -> 100 patches.
+#   * First-run generation is numpy-vectorized (seconds-to-minutes) and is then
+#     CACHED to disk (fixed seed), so the big bank is a one-time startup cost.
+#     Reduce VARIATIONS if terrain baking is too slow or OOMs your GPU.
+TERRAIN_NUM_DIFFICULTY_ROWS = 20   # difficulty levels (the ADR ramp axis)
+TERRAIN_NUM_VARIATIONS = 100       # 20*100 = 2000 distinct terrain patches (exhaustive)
+TERRAIN_USE_CACHE = True           # generate the bank once, cache to disk, reuse
 
 # --- Coupled Episode Rotation ---
 # Each (path, terrain_heightfield, friction) configuration is repeated for
