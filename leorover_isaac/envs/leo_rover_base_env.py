@@ -286,8 +286,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
         if self.cfg.use_camera_lookahead:
             fwd = self.cfg.camera_forward_offset
             rng = self.cfg.camera_max_range
+            # Explicit env-regex path (the sensor is created here, not via the
+            # scene cfg, so the {ENV_REGEX_NS} placeholder wouldn't get substituted).
             scanner_cfg = RayCasterCfg(
-                prim_path="{ENV_REGEX_NS}/Robot/base_link",
+                prim_path="/World/envs/env_.*/Robot/base_link",
                 update_period=0.0,
                 offset=RayCasterCfg.OffsetCfg(pos=(fwd + rng * 0.5, 0.0, 20.0)),
                 attach_yaw_only=True,
