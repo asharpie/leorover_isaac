@@ -71,11 +71,17 @@ from leorover_isaac.envs.leo_rover_mars_hybrid_env import (
 )
 from leorover_isaac.utils.recorder import EpisodeMetricsRecorder
 
+import importlib.metadata as _metadata
 from rsl_rl.runners import OnPolicyRunner
+from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
 try:
-    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
-except Exception:  # older namespace
-    from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import RslRlVecEnvWrapper  # type: ignore
+    # Converts the agent cfg into the schema the installed rsl-rl-lib expects
+    # (the modular actor/critic format in rsl-rl-lib 5.x). REQUIRED — Isaac Lab's
+    # own train.py calls this; without it OnPolicyRunner gets a cfg whose
+    # actor/critic dicts are missing 'class_name'.
+    from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
+except Exception:
+    handle_deprecated_rsl_rl_cfg = None
 
 
 _TASKS = {
@@ -120,9 +126,16 @@ def main():
 
     env.step = _step_with_record
 
-    # Wrap for rsl_rl and run PPO
-    env = RslRlVecEnvWrapper(env)
-    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=run_dir, device=str(env.unwrapped.device))
+    # Translate the agent cfg into the installed rsl-rl-lib schema (the step
+    # Isaac Lab's own train.py performs). Without this, rsl-rl-lib 5.x raises
+    # KeyError: 'class_name' when constructing the actor/critic.
+    if handle_deprecated_rsl_rl_cfg is not None:
+        agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, _metadata.version("rsl-rl-lib"))
+
+    # Wrap for rsl_rl and run PPO (clip_actions matches the official workflow)
+    env = RslRlVecEnvWrapper(env, clip_actions=getattr(agent_cfg, "clip_actions", None))
+    runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=run_dir,
+                            device=getattr(agent_cfg, "device", None) or str(env.unwrapped.device))
     if args.wandb:
         os.environ.setdefault("WANDB_PROJECT", "leorover_isaac")
 
