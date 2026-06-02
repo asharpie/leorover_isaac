@@ -78,8 +78,11 @@ class VectorizedLQR:
         max_velocity_clip: float = 0.4,          # Leo rover hardware limits
         max_omega_clip: float = 1.047,
         use_lqr_baseline: bool = True,
-        # gain-table grid over reference velocity
-        v_table_min: float = 0.0,
+        # gain-table grid over reference velocity. v_table_min must be > 0:
+        # at v_ref=0 the lateral-error mode is uncontrollable and the Riccati
+        # solver fails. Real v_ref is floored at 0.15 by trajectory profiling,
+        # and lookups clamp to [v_table_min, v_table_max], so 0.05 is safe.
+        v_table_min: float = 0.05,
         v_table_max: float = 1.0,
         v_table_steps: int = 401,                # 0.0025 m/s resolution
         yaw_smoothing_alpha: float = 0.85,
@@ -109,9 +112,22 @@ class VectorizedLQR:
         self._dv = float((v_table_max - v_table_min) / (v_table_steps - 1))
         ref = LQRBaseline(wheel_base=self.wheel_base)
         K_list = []
+        prev_K = None
         for v in self._v_grid.cpu().numpy():
             A, B = ref._linearize_unicycle_model(float(v))
-            K = ref._compute_lqr_gain(A, B)                  # [2, 3]
+            try:
+                K = ref._compute_lqr_gain(A, B)              # [2, 3]
+            except Exception:
+                # Riccati degeneracy at very low v_ref (lateral mode uncontrollable).
+                # Reuse the nearest valid gain; PD fallback if we have none yet.
+                if prev_K is not None:
+                    K = prev_K
+                else:
+                    K = np.zeros((2, 3), dtype=np.float64)
+                    K[0, 2] = ref.fallback_kp_velocity
+                    K[1, 0] = ref.fallback_kp_lateral
+                    K[1, 1] = ref.fallback_kp_heading
+            prev_K = K
             K_list.append(np.asarray(K, dtype=np.float32))
         # [steps, 2, 3]
         self._K_table = torch.from_numpy(np.stack(K_list, axis=0)).to(self.device)
