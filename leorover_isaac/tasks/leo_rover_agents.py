@@ -54,10 +54,11 @@ if _RSL:
         max_iterations = 30000          # ~ matches the multi-million-step PyBullet runs
         save_interval = 200
         experiment_name = "leo_rover"
-        empirical_normalization = True   # rsl_rl's RunningMeanStd == PyBullet VecNormalize
 
         policy = RslRlPpoActorCriticCfg(
             init_noise_std=0.37,                  # = exp(PPO_LOG_STD_INIT=-1.0), the v31 init
+            actor_obs_normalization=True,         # == PyBullet VecNormalize(norm_obs=True)
+            critic_obs_normalization=True,
             actor_hidden_dims=[256, 256],         # PPO_POLICY_KWARGS net_arch
             critic_hidden_dims=[256, 256],
             activation="relu",                    # PURE_PPO_POLICY_KWARGS ReLU
