@@ -97,39 +97,33 @@ def generate_heightfield(seed=None, intensity: float = 50.0):
     intensity = max(0.0, min(100.0, intensity))
     height_scale = intensity / 100.0 * 5.0
 
-    if seed is not None:
-        random.seed(seed)
-
-    heightfieldData = [0.0] * (numHeightfieldRows * numHeightfieldColumns)
+    # Vectorized Gaussian-hill generation. Same hill statistics as the PyBullet
+    # version (20-100 hills; radius 20-100 cells; per-hill height 0.05-0.25 * scale;
+    # sigma = radius/2.5) but built with numpy, so each 512x512 patch takes ~ms
+    # instead of millions of Python iterations. This is what makes baking a large
+    # terrain bank at startup feasible. (RNG is numpy's, so exact realizations
+    # differ from PyBullet's, but the slope/height distributions match.)
+    rng = np.random.default_rng(seed)
+    field = np.zeros((numHeightfieldColumns, numHeightfieldRows), dtype=np.float32)  # [y, x]
 
     if intensity > 0:
-        num_hills = random.randint(20, 100)
-        min_hill_radius = 20
-        max_hill_radius = 100
-
-        hill_centers = []
+        num_hills = int(rng.integers(20, 101))
         for _ in range(num_hills):
-            radius = random.randint(min_hill_radius, max_hill_radius)
-            base_max_height = random.uniform(0.05, 0.25)
-            max_height = base_max_height * height_scale
+            radius = int(rng.integers(20, 101))
+            max_height = float(rng.uniform(0.05, 0.25)) * height_scale
             sigma = radius / 2.5
-            cx = random.randint(radius, numHeightfieldRows - radius - 1)
-            cy = random.randint(radius, numHeightfieldColumns - radius - 1)
-            hill_centers.append((cx, cy, radius, max_height, sigma))
+            cx = int(rng.integers(radius, numHeightfieldRows - radius))
+            cy = int(rng.integers(radius, numHeightfieldColumns - radius))
+            x0, x1 = cx - radius, cx + radius + 1
+            y0, y1 = cy - radius, cy + radius + 1
+            dx = (np.arange(x0, x1) - cx).astype(np.float32)             # [w]
+            dy = (np.arange(y0, y1) - cy).astype(np.float32).reshape(-1, 1)  # [h, 1]
+            dist2 = dx * dx + dy * dy                                    # [h, w]
+            bump = (max_height * np.exp(-dist2 / (2.0 * sigma * sigma))).astype(np.float32)
+            bump[dist2 > radius * radius] = 0.0
+            field[y0:y1, x0:x1] += bump
 
-        for cx, cy, radius, max_height, sigma in hill_centers:
-            for dx in range(-radius, radius + 1):
-                for dy in range(-radius, radius + 1):
-                    x = cx + dx
-                    y = cy + dy
-                    if 0 <= x < numHeightfieldRows and 0 <= y < numHeightfieldColumns:
-                        distance = math.sqrt(dx ** 2 + dy ** 2)
-                        if distance <= radius:
-                            height = max_height * math.exp(-(distance ** 2) / (2.0 * sigma ** 2))
-                            index = y * numHeightfieldRows + x
-                            heightfieldData[index] += height
-
-    return heightfieldData
+    return field.reshape(-1)   # flat, row-major: index = y*numHeightfieldRows + x
 
 
 def heightfield_to_grid(heightfieldData) -> np.ndarray:

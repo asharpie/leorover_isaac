@@ -126,8 +126,8 @@ def _resize_nearest(arr: np.ndarray, shape_wh) -> np.ndarray:
 # Isaac Lab TerrainImporterCfg builder
 # --------------------------------------------------------------------------- #
 def make_mars_terrain_cfg(
-    num_difficulty_rows: int = 20,        # difficulty levels (the ADR ramp axis)
-    num_variations: int = 100,            # variations per level -> 20*100 = 2000 patches
+    num_difficulty_rows: int = None,      # default from config.TERRAIN_NUM_DIFFICULTY_ROWS
+    num_variations: int = None,           # default from config.TERRAIN_NUM_VARIATIONS
     sub_terrain_size: float = 12.0,       # each patch comfortably holds a ~10 m path
     horizontal_scale: float = 0.1,        # 0.1 m cells keep ~2000 patches GPU-feasible
     vertical_scale: float = 0.005,
@@ -157,7 +157,21 @@ def make_mars_terrain_cfg(
     The friction here is a default; per-episode friction-intensity randomization
     (PyBullet's friction 0.3->2.0 sweep) is applied via an EventTerm that
     overrides the physics material — see leorover_isaac/utils/events.py.
+
+    Bank size + caching come from config.py (TERRAIN_NUM_DIFFICULTY_ROWS,
+    TERRAIN_NUM_VARIATIONS, TERRAIN_USE_CACHE) so you can tune them from the GUI /
+    EXPERIMENT_OVERRIDES. With caching on, a large bank is generated ONCE and
+    reused on later runs. Generation is numpy-vectorized, so even big banks build
+    in seconds-to-minutes the first time.
     """
+    # Resolve bank size + caching from config.py (overridable via EXPERIMENT_OVERRIDES).
+    import config as _cfg
+    if num_difficulty_rows is None:
+        num_difficulty_rows = int(getattr(_cfg, "TERRAIN_NUM_DIFFICULTY_ROWS", 10))
+    if num_variations is None:
+        num_variations = int(getattr(_cfg, "TERRAIN_NUM_VARIATIONS", 20))
+    use_cache = bool(getattr(_cfg, "TERRAIN_USE_CACHE", True))
+
     try:
         from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg, HfTerrainBaseCfg
         from isaaclab.terrains.height_field.utils import height_field_to_mesh
@@ -235,7 +249,7 @@ def make_mars_terrain_cfg(
         horizontal_scale=horizontal_scale,
         vertical_scale=vertical_scale,
         slope_threshold=0.75,
-        use_cache=False,                  # fresh rng per cell -> max variety
+        use_cache=use_cache,              # generate once -> cache to disk -> fast reuse
         curriculum=curriculum,
         sub_terrains=sub_terrains,
     )

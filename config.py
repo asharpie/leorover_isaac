@@ -97,6 +97,21 @@ ADR_STEP_DOWN = 3.0              # Decrease by 3% per regression (symmetric with
 ADR_MIN_EPISODES_PER_LEVEL = 50  # Must train 50 eps at each level before evaluating
 ADR_COOLDOWN_EPISODES = 30       # 30 eps cooldown — lets VecNormalize adapt after difficulty change
 
+# =============================================================================
+# ISAAC LAB TERRAIN BANK (Isaac-only; ignored by the PyBullet stack)
+# =============================================================================
+# Number of distinct terrain patches baked at startup = ROWS * VARIATIONS, drawn
+# from ~8 terrain types (Mars hills, rough, slopes, dunes, obstacles, stairs),
+# each with its own RNG draw. ROWS is the difficulty/ADR axis. With caching on,
+# the bank is generated ONCE and reused (fast subsequent runs).
+#   * Start small for bring-up (e.g. ROWS=10, VARIATIONS=20 -> 200 patches).
+#   * Scale up for an exhaustive bank (e.g. VARIATIONS=100 -> 2000 patches);
+#     first-run generation is numpy-vectorized so it's seconds-to-minutes, then
+#     cached. Push as far as your GPU memory allows; dial back if terrain baking OOMs.
+TERRAIN_NUM_DIFFICULTY_ROWS = 10
+TERRAIN_NUM_VARIATIONS = 20      # 10*20 = 200 patches default; raise to 100 for 2000
+TERRAIN_USE_CACHE = True         # generate the bank once, cache to disk, reuse
+
 # --- Coupled Episode Rotation ---
 # Each (path, terrain_heightfield, friction) configuration is repeated for
 # this many episodes before rotating to a new one. This gives SAC's replay
