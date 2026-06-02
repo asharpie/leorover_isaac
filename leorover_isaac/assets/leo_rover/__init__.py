@@ -77,21 +77,17 @@ def _build_cfg():
         ),
         actuators={
             # Velocity-controlled wheels: stiffness=0, damping>0 -> velocity tracking.
+            # The rockers are fixed joints in the URDF and get MERGED into base_link
+            # during URDF->USD conversion (merge_fixed_joints), so only the 4 wheel
+            # joints exist — no rocker actuator. effort_limit_sim/velocity_limit_sim
+            # are the current Isaac Lab names (plain effort_limit/velocity_limit are
+            # deprecated and ignored for implicit actuators).
             "wheels": ImplicitActuatorCfg(
                 joint_names_expr=["wheel_.*_joint"],
-                effort_limit=2.0,        # URDF <limit effort="2.0">
-                velocity_limit=6.0,      # URDF <limit velocity="6.0">
+                effort_limit_sim=2.0,        # URDF <limit effort="2.0">
+                velocity_limit_sim=6.0,      # URDF <limit velocity="6.0">
                 stiffness=0.0,
                 damping=10.0,
-            ),
-            # Rockers are fixed in the URDF; if the importer makes them revolute,
-            # lock them with a stiff position drive at 0.
-            "rockers": ImplicitActuatorCfg(
-                joint_names_expr=["rocker_.*_joint"],
-                effort_limit=100.0,
-                velocity_limit=100.0,
-                stiffness=1000.0,
-                damping=100.0,
             ),
         },
     )

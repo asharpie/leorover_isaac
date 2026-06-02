@@ -242,6 +242,7 @@ def make_mars_terrain_cfg(
         raise RuntimeError("No terrain sub-types could be constructed.")
 
     generator = TerrainGeneratorCfg(
+        seed=int(getattr(_cfg, "TERRAIN_SEED", 42)),  # fixed seed -> cache hits across runs
         size=(sub_terrain_size, sub_terrain_size),
         border_width=5.0,
         num_rows=num_difficulty_rows,     # difficulty axis (ADR ramp)
