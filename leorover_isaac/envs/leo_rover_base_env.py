@@ -82,7 +82,7 @@ except Exception:  # pragma: no cover
         pass
 
 
-MAX_WAYPOINTS = 80   # padding cap; longest template/random path is < 70 waypoints
+MAX_WAYPOINTS = 256   # generous padding cap (random paths can exceed 80 waypoints)
 
 # Friction range mapped from the config friction-intensity sweep (0.3 -> 2.0).
 _FRIC_LO = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MIN)
@@ -671,11 +671,11 @@ class LeoRoverBaseEnv(DirectRLEnv):
         choices = np.random.randint(0, self._bank_size, size=n_reset)
         for k, e in enumerate(env_ids.tolist()):
             entry = self._bank[choices[k]]
-            K = entry["K"]
+            K = min(int(entry["K"]), MAX_WAYPOINTS)   # clamp to buffer size (safety)
             self._wps[e].zero_()
-            self._wps[e, :K] = torch.from_numpy(entry["wps"]).to(dev)
+            self._wps[e, :K] = torch.from_numpy(entry["wps"][:K]).to(dev)
             self._cum_len[e].zero_()
-            self._cum_len[e, :K] = torch.from_numpy(entry["cum"]).to(dev)
+            self._cum_len[e, :K] = torch.from_numpy(entry["cum"][:K]).to(dev)
             self._num_wp[e] = K
             self._total_len[e] = entry["total"]
             self._goal_xy[e] = torch.from_numpy(entry["goal"]).to(dev)
