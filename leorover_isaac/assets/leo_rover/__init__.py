@@ -84,10 +84,17 @@ def _build_cfg():
             # deprecated and ignored for implicit actuators).
             "wheels": ImplicitActuatorCfg(
                 joint_names_expr=["wheel_.*_joint"],
-                effort_limit_sim=2.0,        # URDF <limit effort="2.0">
-                velocity_limit_sim=6.0,      # URDF <limit velocity="6.0">
-                stiffness=0.0,
-                damping=10.0,
+                # PyBullet drove these with p.VELOCITY_CONTROL and NO force arg, i.e. the
+                # default maxForce ~1000 N.m -- effectively an unlimited velocity servo, so
+                # the wheels always tracked the commanded ~0.67 rad/s. The URDF's
+                # effort="2.0" was never applied there. Porting that literal 2.0 N.m
+                # starved the wheels (couldn't overcome terrain load) -> rover barely moved
+                # -> 0% success / flat reward. Match PyBullet: high effort ceiling + a stiff
+                # velocity-tracking gain. (Drop these toward 100/100 if you see wheel jitter.)
+                effort_limit_sim=1000.0,     # = PyBullet VELOCITY_CONTROL default maxForce
+                velocity_limit_sim=100.0,    # well above the ~0.67 rad/s commands
+                stiffness=0.0,               # velocity control: no position term
+                damping=1000.0,              # stiff servo so wheels TRACK target like PyBullet
             ),
         },
     )
