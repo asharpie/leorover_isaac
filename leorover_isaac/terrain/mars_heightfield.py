@@ -172,6 +172,22 @@ def make_mars_terrain_cfg(
         num_variations = int(getattr(_cfg, "TERRAIN_NUM_VARIATIONS", 20))
     use_cache = bool(getattr(_cfg, "TERRAIN_USE_CACHE", True))
 
+    # Quick-test overrides (no config edit / push needed): shrink the bank or
+    # coarsen the mesh straight from the shell. The full 20x100 = 2000-patch bank
+    # at 0.1 m cells is a ~57M-triangle mesh that PhysX CANNOT cook -> the terrain
+    # gets no collider and the rover falls through into the void. Sweep sizes with
+    #   LEOROVER_TERRAIN_ROWS / LEOROVER_TERRAIN_COLS / LEOROVER_TERRAIN_HSCALE
+    # to find the largest bank that still cooks, then bake that into config.py.
+    import os as _os
+    num_difficulty_rows = int(_os.environ.get("LEOROVER_TERRAIN_ROWS", num_difficulty_rows))
+    num_variations = int(_os.environ.get("LEOROVER_TERRAIN_COLS", num_variations))
+    horizontal_scale = float(_os.environ.get("LEOROVER_TERRAIN_HSCALE", horizontal_scale))
+    _tris = int((sub_terrain_size / horizontal_scale) ** 2 * 2)
+    print(f"[mars_heightfield] terrain bank: {num_difficulty_rows} x {num_variations} = "
+          f"{num_difficulty_rows * num_variations} patches @ {sub_terrain_size} m, "
+          f"hscale {horizontal_scale} m  (~{_tris} tris/patch, "
+          f"~{_tris * num_difficulty_rows * num_variations / 1e6:.1f}M total)")
+
     try:
         from isaaclab.terrains import TerrainGeneratorCfg, TerrainImporterCfg, HfTerrainBaseCfg
         from isaaclab.terrains.height_field.utils import height_field_to_mesh
