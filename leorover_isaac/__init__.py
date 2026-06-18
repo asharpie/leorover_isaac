@@ -19,6 +19,18 @@ Top-level layout::
 
 __version__ = "0.0.1"
 
+# --- sys.path hygiene -------------------------------------------------------
+# The repo root holds the project-wide `config.py`. Isaac Sim 4.5 bundles an
+# OpenCV whose `cv2/config.py` otherwise shadows our `import config`, producing
+# a `NameError: LOADER_DIR` at env-import time. Force the repo root to the very
+# front of sys.path (ahead of Isaac's bundled dirs) so `import config` always
+# resolves to ours. This runs before _register_tasks() imports any submodule.
+import os as _os, sys as _sys
+_repo_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+while _repo_root in _sys.path:
+    _sys.path.remove(_repo_root)
+_sys.path.insert(0, _repo_root)
+
 
 def _register_tasks():
     """Register all gym tasks defined in this package.
