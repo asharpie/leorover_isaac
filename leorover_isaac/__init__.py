@@ -25,11 +25,30 @@ __version__ = "0.0.1"
 # a `NameError: LOADER_DIR` at env-import time. Force the repo root to the very
 # front of sys.path (ahead of Isaac's bundled dirs) so `import config` always
 # resolves to ours. This runs before _register_tasks() imports any submodule.
-import os as _os, sys as _sys
+import os as _os, sys as _sys, importlib.util as _ilu
 _repo_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 while _repo_root in _sys.path:
     _sys.path.remove(_repo_root)
 _sys.path.insert(0, _repo_root)
+# Belt-and-suspenders: explicitly load OUR config.py by absolute path and cache
+# it as the top-level `config` module. Python consults sys.modules BEFORE it
+# searches sys.path, so pre-populating the cache guarantees every later
+# `import config` gets ours, even when Isaac's bundled cv2 dir sits ahead of the
+# repo root on sys.path (which is what broke the plain sys.path fix).
+_cfg_path = _os.path.join(_repo_root, "config.py")
+if _os.path.isfile(_cfg_path):
+    try:
+        _spec = _ilu.spec_from_file_location("config", _cfg_path)
+        _cfg_mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_cfg_mod)
+        _sys.modules["config"] = _cfg_mod
+        if _os.environ.get("LEOROVER_DEBUG"):
+            print(f"[leorover_isaac] config -> {_cfg_path}")
+    except Exception as _e:  # pragma: no cover
+        if _os.environ.get("LEOROVER_DEBUG"):
+            print(f"[leorover_isaac] explicit config load failed: {_e}")
+elif _os.environ.get("LEOROVER_DEBUG"):
+    print(f"[leorover_isaac] WARNING: config.py not found at {_cfg_path}")
 
 
 def _register_tasks():
