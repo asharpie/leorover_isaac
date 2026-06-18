@@ -96,8 +96,10 @@ def main():
     print(f"  --> MEAN forward speed: {sp.mean():.4f} m/s")
     print(f"  --> MAX  forward speed: {sp.max():.4f} m/s")
     print(f"  distance traveled     : mean {dist.mean().item():.3f} m   max {dist.max().item():.3f} m")
-    print(f"  body z-height         : start {zheights[0]:.3f} -> end {zheights[-1]:.3f} m  (big drop = falling through ground)")
-    print(f"  HEALTHY would be      : ~{ctrl.max_velocity_clip:.2f} m/s, ~{ctrl.max_velocity_clip*args.steps*0.2:.1f} m traveled")
+    print(f"  body z-height         : start {zheights[0]:.3f} -> end {zheights[-1]:.3f} m  (should stay near rest; a big drop = spawned too high / sinking)")
+    _phys_r = 0.0625  # URDF wheel collision radius (shared with the PyBullet rover)
+    _exp_v = ctrl.max_velocity_clip / (2.0 * ctrl.wheel_radius) * _phys_r
+    print(f"  EXPECTED ground speed : ~{_exp_v:.3f} m/s, ~{_exp_v*args.steps*0.2:.2f} m traveled (faithful PyBullet value = v_clip*phys_r/(2*kin_r), NOT {ctrl.max_velocity_clip} m/s)")
     print("====================================================\n")
 
     env.close()

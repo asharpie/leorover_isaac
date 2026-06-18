@@ -100,6 +100,11 @@ except Exception:
 
 MAX_WAYPOINTS = 256   # generous padding cap (random paths can exceed 80 waypoints)
 
+# Spawn height above the env-origin terrain. The rover's base_link rests ~0.2 m
+# up, so a 0.3 m clearance starts it just above rest (a ~0.1 m PhysX settle in the
+# first step) rather than the old 0.8 m free-fall. Override via config if needed.
+SPAWN_CLEARANCE = float(getattr(cfg_mod, "SPAWN_CLEARANCE", 0.30))
+
 # Friction range mapped from the config friction-intensity sweep (0.3 -> 2.0).
 _FRIC_LO = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MIN)
 _FRIC_HI = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MAX)
@@ -703,8 +708,15 @@ class LeoRoverBaseEnv(DirectRLEnv):
 
         # --- reset robot state at the (possibly new) env origin ---
         root_state = self.robot.data.default_root_state[env_ids].clone()
-        root_state[:, :3] += self._origins()[env_ids]
-        root_state[:, 2] += 0.3   # spawn slightly above terrain; PhysX settles it
+        origins = self._origins()[env_ids]
+        root_state[:, :3] += origins
+        # Spawn just above the rover's rest height so each episode starts stable.
+        # PyBullet spawned +0.5 m then ran a 2000-step low-gravity settle BEFORE the
+        # episode; that per-env settle isn't affordable across thousands of envs, so
+        # we match the EFFECT (a resting start) by spawning at a small clearance and
+        # letting PhysX settle the last ~0.1 m within the first step, instead of the
+        # old +0.8 m free-fall that polluted the first ~0.5 s of every episode.
+        root_state[:, 2] = origins[:, 2] + SPAWN_CLEARANCE
         self.robot.write_root_state_to_sim(root_state, env_ids)
         joint_pos = self.robot.data.default_joint_pos[env_ids].clone()
         joint_vel = self.robot.data.default_joint_vel[env_ids].clone()
