@@ -48,43 +48,75 @@ except Exception:
     except Exception:
         _RSL = False
 
-from isaaclab.utils import configclass
+# configclass moved namespaces too (isaaclab.utils vs omni.isaac.lab.utils).
+try:
+    from isaaclab.utils import configclass
+except Exception:
+    from omni.isaac.lab.utils import configclass  # Isaac Sim 4.5 / Isaac Lab 1.x
+
+
+def _supported(cls, **kw):
+    """Keep only the kwargs that `cls` (a config dataclass) actually defines, so one
+    call site works across rsl-rl versions whose cfg schemas differ (4.5's
+    RslRlPpoActorCriticCfg has no noise_std_type / *_obs_normalization fields)."""
+    names = set()
+    try:
+        import dataclasses
+        names = {f.name for f in dataclasses.fields(cls)}
+    except Exception:
+        for base in getattr(cls, "__mro__", [cls]):
+            names |= set(getattr(base, "__annotations__", {}).keys())
+    return {k: v for k, v in kw.items() if k in names}
 
 
 if _RSL:
+    _RUNNER_FIELDS = set()
+    try:
+        import dataclasses as _dc
+        _RUNNER_FIELDS = {f.name for f in _dc.fields(RslRlOnPolicyRunnerCfg)}
+    except Exception:
+        pass
+
+    # Built with field-filtering so the same definition loads on both the new
+    # (Isaac Sim 5.x / rsl-rl 5.x) and old (Isaac Sim 4.5 / rsl-rl 2.x) schemas.
+    _POLICY = RslRlPpoActorCriticCfg(**_supported(
+        RslRlPpoActorCriticCfg,
+        init_noise_std=0.37,                  # = exp(PPO_LOG_STD_INIT=-1.0), the v31 init
+        noise_std_type="log",                 # 5.x: std=exp(log_std), strictly >0 (v31 clamp)
+        actor_obs_normalization=True,         # 5.x obs normalization (== VecNormalize)
+        critic_obs_normalization=True,
+        actor_hidden_dims=[256, 256],         # PPO_POLICY_KWARGS net_arch
+        critic_hidden_dims=[256, 256],
+        activation="relu",                    # PURE_PPO_POLICY_KWARGS ReLU
+    ))
+    _ALGO = RslRlPpoAlgorithmCfg(**_supported(
+        RslRlPpoAlgorithmCfg,
+        value_loss_coef=cfg_mod.PPO_VF_COEF,           # 0.5
+        use_clipped_value_loss=True,
+        clip_param=cfg_mod.PPO_CLIP_RANGE,             # 0.2
+        entropy_coef=cfg_mod.PPO_ENT_COEF,             # 0.001
+        num_learning_epochs=cfg_mod.PPO_N_EPOCHS,      # 5
+        num_mini_batches=4,
+        learning_rate=cfg_mod.PPO_LEARNING_RATE,       # 1.5e-4
+        schedule="adaptive",                            # KL-adaptive
+        gamma=cfg_mod.PPO_GAMMA,                        # 0.99
+        lam=cfg_mod.PPO_GAE_LAMBDA,                     # 0.95
+        desired_kl=cfg_mod.PPO_TARGET_KL,               # 0.02
+        max_grad_norm=cfg_mod.PPO_MAX_GRAD_NORM,        # 0.5
+    ))
+
     @configclass
     class LeoRoverPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         num_steps_per_env = 32
         max_iterations = 30000          # ~ matches the multi-million-step PyBullet runs
         save_interval = 200
         experiment_name = "leo_rover"
-
-        policy = RslRlPpoActorCriticCfg(
-            init_noise_std=0.37,                  # = exp(PPO_LOG_STD_INIT=-1.0), the v31 init
-            noise_std_type="log",                 # std=exp(log_std): strictly >0, cannot crash.
-                                                  # (default "scalar" let std go negative ->
-                                                  #  RuntimeError at iter 4247. This is the v31
-                                                  #  SafeMlpPolicy log_std clamp, rsl_rl-style.)
-            actor_obs_normalization=True,         # == PyBullet VecNormalize(norm_obs=True)
-            critic_obs_normalization=True,
-            actor_hidden_dims=[256, 256],         # PPO_POLICY_KWARGS net_arch
-            critic_hidden_dims=[256, 256],
-            activation="relu",                    # PURE_PPO_POLICY_KWARGS ReLU
-        )
-        algorithm = RslRlPpoAlgorithmCfg(
-            value_loss_coef=cfg_mod.PPO_VF_COEF,           # 0.5
-            use_clipped_value_loss=True,
-            clip_param=cfg_mod.PPO_CLIP_RANGE,             # 0.2
-            entropy_coef=cfg_mod.PPO_ENT_COEF,             # 0.001
-            num_learning_epochs=cfg_mod.PPO_N_EPOCHS,      # 5
-            num_mini_batches=4,
-            learning_rate=cfg_mod.PPO_LEARNING_RATE,       # 1.5e-4
-            schedule="adaptive",                            # KL-adaptive (replaces SafeMlpPolicy)
-            gamma=cfg_mod.PPO_GAMMA,                        # 0.99
-            lam=cfg_mod.PPO_GAE_LAMBDA,                     # 0.95
-            desired_kl=cfg_mod.PPO_TARGET_KL,               # 0.02
-            max_grad_norm=cfg_mod.PPO_MAX_GRAD_NORM,        # 0.5
-        )
+        policy = _POLICY
+        algorithm = _ALGO
+        # On Isaac Sim 4.5 / rsl-rl 2.x obs normalization is a runner-level flag
+        # (the 5.x path sets it on the policy above). Only define it when present.
+        if "empirical_normalization" in _RUNNER_FIELDS:
+            empirical_normalization = True
 
     @configclass
     class LeoRoverFlatPPORunnerCfg(LeoRoverPPORunnerCfg):

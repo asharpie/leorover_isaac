@@ -178,10 +178,17 @@ def make_mars_terrain_cfg(
         import isaaclab.terrains as terrain_gen  # noqa: F401
         from dataclasses import MISSING
         import isaaclab.sim as sim_utils
-    except Exception as exc:  # pragma: no cover - depends on Isaac install
-        print(f"[mars_heightfield] isaaclab.terrains unavailable ({exc}); "
-              f"returning None. Generation functions still work for tests.")
-        return None
+    except Exception:
+        try:  # Isaac Sim 4.5 / Isaac Lab 1.x
+            from omni.isaac.lab.terrains import TerrainGeneratorCfg, TerrainImporterCfg, HfTerrainBaseCfg
+            from omni.isaac.lab.terrains.height_field.utils import height_field_to_mesh
+            import omni.isaac.lab.terrains as terrain_gen  # noqa: F401
+            from dataclasses import MISSING
+            import omni.isaac.lab.sim as sim_utils
+        except Exception as exc:  # pragma: no cover - depends on Isaac install
+            print(f"[mars_heightfield] isaaclab.terrains unavailable ({exc}); "
+                  f"returning None. Generation functions still work for tests.")
+            return None
 
     # ── Build an EXHAUSTIVE bank of terrain TYPES ──────────────────────────
     # num_rows*num_cols cells, each assigned a type by `proportion` and given
@@ -202,12 +209,20 @@ def make_mars_terrain_cfg(
     # backbone of the variety: rough noise, up/down slopes, dunes (waves),
     # scattered obstacles/rocks, and stairs.
     try:
-        from isaaclab.terrains.height_field import (
-            HfRandomUniformTerrainCfg, HfPyramidSlopedTerrainCfg,
-            HfInvertedPyramidSlopedTerrainCfg, HfWaveTerrainCfg,
-            HfDiscreteObstaclesTerrainCfg, HfPyramidStairsTerrainCfg,
-            HfInvertedPyramidStairsTerrainCfg,
-        )
+        try:
+            from isaaclab.terrains.height_field import (
+                HfRandomUniformTerrainCfg, HfPyramidSlopedTerrainCfg,
+                HfInvertedPyramidSlopedTerrainCfg, HfWaveTerrainCfg,
+                HfDiscreteObstaclesTerrainCfg, HfPyramidStairsTerrainCfg,
+                HfInvertedPyramidStairsTerrainCfg,
+            )
+        except Exception:  # Isaac Sim 4.5 / Isaac Lab 1.x namespace
+            from omni.isaac.lab.terrains.height_field import (
+                HfRandomUniformTerrainCfg, HfPyramidSlopedTerrainCfg,
+                HfInvertedPyramidSlopedTerrainCfg, HfWaveTerrainCfg,
+                HfDiscreteObstaclesTerrainCfg, HfPyramidStairsTerrainCfg,
+                HfInvertedPyramidStairsTerrainCfg,
+            )
         sub_terrains.update({
             "rough":      HfRandomUniformTerrainCfg(proportion=0.22, noise_range=(0.02, 0.14), noise_step=0.02, **common),
             "slope_up":   HfPyramidSlopedTerrainCfg(proportion=0.12, slope_range=(0.0, 0.45), platform_width=2.0, **common),

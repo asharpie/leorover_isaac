@@ -88,7 +88,10 @@ class EpisodeMetricsRecorder:
         resw = (env._last_residual[:, 1].abs() / self._mw) if env.cfg.use_lqr_baseline else torch.zeros_like(cte)
         # roll/pitch from quaternion
         try:
-            from isaaclab.utils.math import euler_xyz_from_quat
+            try:
+                from isaaclab.utils.math import euler_xyz_from_quat
+            except Exception:
+                from omni.isaac.lab.utils.math import euler_xyz_from_quat
             roll, pitch, _ = euler_xyz_from_quat(env.robot.data.root_quat_w)
         except Exception:
             roll = torch.zeros_like(cte); pitch = torch.zeros_like(cte)

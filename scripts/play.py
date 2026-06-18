@@ -40,7 +40,10 @@ parser.add_argument("--video", action="store_true",
 parser.add_argument("--video_length", type=int, default=600,
                     help="number of policy steps (0.2 s each) to record")
 
-from isaaclab.app import AppLauncher
+try:
+    from isaaclab.app import AppLauncher
+except Exception:
+    from omni.isaac.lab.app import AppLauncher  # Isaac Sim 4.5
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 # Offscreen video recording needs the camera/render pipeline up.
@@ -64,7 +67,10 @@ from leorover_isaac.envs.leo_rover_mars_hybrid_env import (
 )
 from leorover_isaac.utils.recorder import EpisodeMetricsRecorder
 from rsl_rl.runners import OnPolicyRunner
-from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+try:
+    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+except Exception:
+    from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import RslRlVecEnvWrapper  # Isaac Sim 4.5
 try:
     from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
 except Exception:

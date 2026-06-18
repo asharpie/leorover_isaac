@@ -47,12 +47,18 @@ def main():
     args = ap.parse_args()
 
     # --- Boot a (headless) SimulationApp BEFORE importing isaaclab sim bits ---
-    from isaaclab.app import AppLauncher
+    try:
+        from isaaclab.app import AppLauncher
+    except Exception:
+        from omni.isaac.lab.app import AppLauncher  # Isaac Sim 4.5
     app_launcher = AppLauncher(headless=args.headless)
     simulation_app = app_launcher.app
 
     # Imports that require the app to be running:
-    import isaaclab.sim as sim_utils
+    try:
+        import isaaclab.sim as sim_utils
+    except Exception:
+        import omni.isaac.lab.sim as sim_utils
     try:
         # Isaac Lab >= 2.0 namespace
         from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg

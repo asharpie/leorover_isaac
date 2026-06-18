@@ -28,7 +28,10 @@ parser.add_argument("--episodes", type=int, default=1000)
 parser.add_argument("--seed", type=int, default=12345)
 parser.add_argument("--out", default="logs/compare")
 
-from isaaclab.app import AppLauncher
+try:
+    from isaaclab.app import AppLauncher
+except Exception:
+    from omni.isaac.lab.app import AppLauncher  # Isaac Sim 4.5
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 simulation_app = AppLauncher(args).app

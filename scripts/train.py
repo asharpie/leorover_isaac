@@ -44,7 +44,10 @@ parser.add_argument("--log_dir", type=str, default="logs")
 parser.add_argument("--wandb", action="store_true", help="enable Weights & Biases logging")
 
 try:
-    from isaaclab.app import AppLauncher
+    try:
+        from isaaclab.app import AppLauncher
+    except Exception:
+        from omni.isaac.lab.app import AppLauncher  # Isaac Sim 4.5
     AppLauncher.add_app_launcher_args(parser)
     args = parser.parse_args()
     app_launcher = AppLauncher(args)
@@ -73,7 +76,10 @@ from leorover_isaac.utils.recorder import EpisodeMetricsRecorder
 
 import importlib.metadata as _metadata
 from rsl_rl.runners import OnPolicyRunner
-from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+try:
+    from isaaclab_rl.rsl_rl import RslRlVecEnvWrapper
+except Exception:
+    from omni.isaac.lab_tasks.utils.wrappers.rsl_rl import RslRlVecEnvWrapper  # Isaac Sim 4.5
 try:
     # Converts the agent cfg into the schema the installed rsl-rl-lib expects
     # (the modular actor/critic format in rsl-rl-lib 5.x). REQUIRED — Isaac Lab's

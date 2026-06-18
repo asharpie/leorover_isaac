@@ -30,7 +30,10 @@ parser.add_argument("--steps", type=int, default=200)
 parser.add_argument("--throttle", type=float, default=1.0, help="forward action in [-1,1]")
 parser.add_argument("--turn", type=float, default=0.0, help="omega action in [-1,1]")
 
-from isaaclab.app import AppLauncher
+try:
+    from isaaclab.app import AppLauncher
+except Exception:
+    from omni.isaac.lab.app import AppLauncher  # Isaac Sim 4.5
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
 simulation_app = AppLauncher(args).app

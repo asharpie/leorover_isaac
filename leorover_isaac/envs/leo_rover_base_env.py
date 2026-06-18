@@ -72,14 +72,30 @@ try:
     from isaaclab.utils import configclass
     from isaaclab.utils.math import euler_xyz_from_quat
     _ISAAC = True
-except Exception:  # pragma: no cover
-    _ISAAC = False
-    def configclass(c):  # type: ignore
-        return c
-    class DirectRLEnv:  # type: ignore
-        pass
-    class DirectRLEnvCfg:  # type: ignore
-        pass
+except Exception:
+    try:
+        # Isaac Sim 4.5 / Isaac Lab 1.x use the older omni.isaac.lab.* namespace.
+        import omni.isaac.lab.sim as sim_utils
+        from omni.isaac.lab.assets import Articulation
+        from omni.isaac.lab.envs import DirectRLEnv, DirectRLEnvCfg
+        from omni.isaac.lab.scene import InteractiveSceneCfg
+        from omni.isaac.lab.sim import SimulationCfg
+        from omni.isaac.lab.terrains import TerrainImporterCfg
+        from omni.isaac.lab.sensors import RayCaster, RayCasterCfg, patterns
+        from omni.isaac.lab.managers import EventTermCfg as EventTerm
+        from omni.isaac.lab.managers import SceneEntityCfg
+        import omni.isaac.lab.envs.mdp as mdp
+        from omni.isaac.lab.utils import configclass
+        from omni.isaac.lab.utils.math import euler_xyz_from_quat
+        _ISAAC = True
+    except Exception:  # pragma: no cover
+        _ISAAC = False
+        def configclass(c):  # type: ignore
+            return c
+        class DirectRLEnv:  # type: ignore
+            pass
+        class DirectRLEnvCfg:  # type: ignore
+            pass
 
 
 MAX_WAYPOINTS = 256   # generous padding cap (random paths can exceed 80 waypoints)

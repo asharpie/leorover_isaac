@@ -41,16 +41,37 @@ LEFT_WHEELS = ["wheel_FL_joint", "wheel_RL_joint"]
 RIGHT_WHEELS = ["wheel_FR_joint", "wheel_RR_joint"]
 
 
+def _supported(cls, **kw):
+    """Return only the kwargs that `cls` (a config dataclass) actually defines.
+
+    Lets one call site work across Isaac Lab versions whose cfg classes renamed
+    fields (e.g. effort_limit -> effort_limit_sim between Isaac Sim 4.5 and 5.x).
+    """
+    names = set()
+    try:
+        import dataclasses
+        names = {f.name for f in dataclasses.fields(cls)}
+    except Exception:
+        for base in getattr(cls, "__mro__", [cls]):
+            names |= set(getattr(base, "__annotations__", {}).keys())
+    return {k: v for k, v in kw.items() if k in names}
+
+
 def _build_cfg():
     """Construct the ArticulationCfg (lazy — needs isaaclab installed)."""
     try:
         import isaaclab.sim as sim_utils
         from isaaclab.assets import ArticulationCfg
         from isaaclab.actuators import ImplicitActuatorCfg
-    except Exception as exc:  # pragma: no cover
-        print(f"[leo_rover] isaaclab unavailable ({exc}); LEO_ROVER_CFG=None. "
-              f"Run inside the Isaac Lab env to use the articulation.")
-        return None
+    except Exception:
+        try:  # Isaac Sim 4.5 / Isaac Lab 1.x
+            import omni.isaac.lab.sim as sim_utils
+            from omni.isaac.lab.assets import ArticulationCfg
+            from omni.isaac.lab.actuators import ImplicitActuatorCfg
+        except Exception as exc:  # pragma: no cover
+            print(f"[leo_rover] isaaclab unavailable ({exc}); LEO_ROVER_CFG=None. "
+                  f"Run inside the Isaac Lab env to use the articulation.")
+            return None
 
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
@@ -76,26 +97,25 @@ def _build_cfg():
             joint_vel={".*": 0.0},
         ),
         actuators={
-            # Velocity-controlled wheels: stiffness=0, damping>0 -> velocity tracking.
-            # The rockers are fixed joints in the URDF and get MERGED into base_link
-            # during URDF->USD conversion (merge_fixed_joints), so only the 4 wheel
-            # joints exist — no rocker actuator. effort_limit_sim/velocity_limit_sim
-            # are the current Isaac Lab names (plain effort_limit/velocity_limit are
-            # deprecated and ignored for implicit actuators).
-            "wheels": ImplicitActuatorCfg(
+            # Velocity-controlled wheels (stiffness=0, damping>0). The rockers are fixed
+            # joints merged into base_link during URDF->USD, so only the 4 wheel joints
+            # exist (no rocker actuator). Field names differ by Isaac Sim version:
+            # effort_limit_sim/velocity_limit_sim (5.x) vs effort_limit/velocity_limit
+            # (4.5); _supported() passes whichever the installed cfg class defines.
+            "wheels": ImplicitActuatorCfg(**_supported(
+                ImplicitActuatorCfg,
                 joint_names_expr=["wheel_.*_joint"],
-                # PyBullet drove these with p.VELOCITY_CONTROL and NO force arg, i.e. the
-                # default maxForce ~1000 N.m -- effectively an unlimited velocity servo, so
-                # the wheels always tracked the commanded ~0.67 rad/s. The URDF's
-                # effort="2.0" was never applied there. Porting that literal 2.0 N.m
-                # starved the wheels (couldn't overcome terrain load) -> rover barely moved
-                # -> 0% success / flat reward. Match PyBullet: high effort ceiling + a stiff
-                # velocity-tracking gain. (Drop these toward 100/100 if you see wheel jitter.)
-                effort_limit_sim=1000.0,     # = PyBullet VELOCITY_CONTROL default maxForce
-                velocity_limit_sim=100.0,    # well above the ~0.67 rad/s commands
-                stiffness=0.0,               # velocity control: no position term
-                damping=1000.0,              # stiff servo so wheels TRACK target like PyBullet
-            ),
+                # PyBullet drove these with p.VELOCITY_CONTROL and NO force arg (default
+                # maxForce ~1000 N.m), so wheels always tracked the commanded ~0.67 rad/s.
+                # The URDF's effort="2.0" was never applied there; porting that literal
+                # value starved the wheels -> rover barely moved -> 0% success. Match
+                # PyBullet: high effort ceiling + stiff velocity tracking. (Lower toward
+                # 100/100 if you see wheel jitter.)
+                effort_limit_sim=1000.0, effort_limit=1000.0,
+                velocity_limit_sim=100.0, velocity_limit=100.0,
+                stiffness=0.0,
+                damping=1000.0,
+            )),
         },
     )
 

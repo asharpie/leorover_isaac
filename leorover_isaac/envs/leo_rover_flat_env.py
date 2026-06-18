@@ -18,9 +18,8 @@ from leorover_isaac.envs.leo_rover_base_env import LeoRoverBaseEnv, LeoRoverBase
 __all__ = ["LeoRoverFlatEnv", "LeoRoverFlatEnvCfg"]
 
 if _ISAAC:
-    import isaaclab.sim as sim_utils
-    from isaaclab.terrains import TerrainImporterCfg
-    from isaaclab.utils import configclass
+    # reuse the namespace the base env already resolved (isaaclab vs omni.isaac.lab)
+    from leorover_isaac.envs.leo_rover_base_env import sim_utils, TerrainImporterCfg, configclass
     from leorover_isaac.assets.leo_rover import LEO_ROVER_CFG
 
     @configclass

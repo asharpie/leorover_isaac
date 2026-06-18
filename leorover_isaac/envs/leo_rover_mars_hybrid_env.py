@@ -23,7 +23,7 @@ from leorover_isaac.envs.leo_rover_base_env import LeoRoverBaseEnv, LeoRoverBase
 __all__ = ["LeoRoverMarsHybridEnv", "LeoRoverMarsHybridEnvCfg"]
 
 if _ISAAC:
-    from isaaclab.utils import configclass
+    from leorover_isaac.envs.leo_rover_base_env import configclass
     from leorover_isaac.assets.leo_rover import LEO_ROVER_CFG
     from leorover_isaac.terrain.mars_heightfield import make_mars_terrain_cfg
 
