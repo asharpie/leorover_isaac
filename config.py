@@ -111,7 +111,12 @@ ADR_COOLDOWN_EPISODES = 30       # 30 eps cooldown — lets VecNormalize adapt a
 #     CACHED to disk (fixed seed), so the big bank is a one-time startup cost.
 #     Reduce VARIATIONS if terrain baking is too slow or OOMs your GPU.
 TERRAIN_NUM_DIFFICULTY_ROWS = 20   # difficulty levels (the ADR ramp axis)
-TERRAIN_NUM_VARIATIONS = 100       # 20*100 = 2000 distinct terrain patches (exhaustive)
+TERRAIN_NUM_VARIATIONS = 10        # 20*10 = 200 patches (~5.8M tris). PhysX CANNOT cook
+                                   # the old 2000-patch (~57.6M-tri) mesh on Isaac Sim 4.5
+                                   # -> "Unable to create triangle mesh" -> rover falls
+                                   # through. 200 cooks in ~70s (cached after). To go
+                                   # bigger, raise this only as far as cooking succeeds;
+                                   # sweep at runtime with LEOROVER_TERRAIN_ROWS/COLS.
 TERRAIN_USE_CACHE = True           # generate the bank once, cache to disk, reuse
 
 # --- Coupled Episode Rotation ---
