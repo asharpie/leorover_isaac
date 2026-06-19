@@ -63,7 +63,7 @@ try:
     from isaaclab.assets import Articulation
     from isaaclab.envs import DirectRLEnv, DirectRLEnvCfg
     from isaaclab.scene import InteractiveSceneCfg
-    from isaaclab.sim import SimulationCfg
+    from isaaclab.sim import SimulationCfg, PhysxCfg
     from isaaclab.terrains import TerrainImporterCfg
     from isaaclab.sensors import RayCaster, RayCasterCfg, patterns
     from isaaclab.managers import EventTermCfg as EventTerm
@@ -79,7 +79,7 @@ except Exception:
         from omni.isaac.lab.assets import Articulation
         from omni.isaac.lab.envs import DirectRLEnv, DirectRLEnvCfg
         from omni.isaac.lab.scene import InteractiveSceneCfg
-        from omni.isaac.lab.sim import SimulationCfg
+        from omni.isaac.lab.sim import SimulationCfg, PhysxCfg
         from omni.isaac.lab.terrains import TerrainImporterCfg
         from omni.isaac.lab.sensors import RayCaster, RayCasterCfg, patterns
         from omni.isaac.lab.managers import EventTermCfg as EventTerm
@@ -139,6 +139,18 @@ if _ISAAC:
             dt=1.0 / 50.0,
             render_interval=10,
             gravity=(0.0, 0.0, -3.71),   # Mars gravity, as in environment2.reset()
+            # GPU PhysX collision buffers. Defaults are sized for a few hundred envs;
+            # at 4096 envs the per-step contact patches (4 wheels x rough Mars terrain
+            # x thousands of envs) overflow the default patch buffer -> PhysX logs
+            # "Patch buffer overflow ... increase to at least N" and DROPS contacts,
+            # so wheels intermittently miss the ground and physics goes unreliable.
+            # Raise patch + contact buffers well above the observed need (~0.56M
+            # patches at low difficulty; rougher ADR terrain pushes it higher).
+            # Overridable from config.py if a buffer still overflows at high difficulty.
+            physx=PhysxCfg(
+                gpu_max_rigid_patch_count=int(getattr(cfg_mod, "PHYSX_GPU_PATCH_COUNT", 2 ** 22)),
+                gpu_max_rigid_contact_count=int(getattr(cfg_mod, "PHYSX_GPU_CONTACT_COUNT", 2 ** 23)),
+            ),
         )
         # 2000 policy steps @ 0.2 s — matches the MyEnv2 effective agent-step cap.
         episode_length_s: float = 400.0
