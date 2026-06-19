@@ -217,6 +217,23 @@ class LeoRoverBaseEnv(DirectRLEnv):
 
         # Reward / behaviour config from config.py (single source of truth).
         self._ppo = cfg_mod.get_pure_ppo_reward_config()
+        # Pure-PPO reward-tuning overrides: sweep weights from the shell (no code
+        # edit / push) to cure the stall. The default progress reward telescopes to
+        # only +10 for the whole path while a single off-path step costs up to -0.5
+        # (-5*cte^2), and the velocity reward zeroes out past 0.5 m CTE, so the
+        # policy parks near the start. Raise ppo_w_progress (make forward progress
+        # the dominant dense term) and/or lower ppo_w_cte. Example:
+        #   LEOROVER_W_PROGRESS=150 LEOROVER_W_CTE=2
+        import os as _os
+        for _key, _envvar in (("ppo_w_progress", "LEOROVER_W_PROGRESS"),
+                              ("ppo_w_cte", "LEOROVER_W_CTE"),
+                              ("ppo_w_velocity", "LEOROVER_W_VELOCITY"),
+                              ("ppo_w_alive", "LEOROVER_W_ALIVE"),
+                              ("ppo_cte_ok_threshold", "LEOROVER_CTE_OK")):
+            _v = _os.environ.get(_envvar)
+            if _v is not None:
+                self._ppo[_key] = float(_v)
+                print(f"[reward override] {_key} = {self._ppo[_key]}")
         self._res = cfg_mod.get_residual_reward_config()
         self._goal_tol = 0.2
         self._waypoint_tol = 0.2
