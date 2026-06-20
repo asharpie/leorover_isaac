@@ -37,8 +37,11 @@ except Exception:
     from omni.isaac.lab.app import AppLauncher  # Isaac Sim 4.5
 AppLauncher.add_app_launcher_args(parser)
 args = parser.parse_args()
-# NOTE: cameras are intentionally NOT enabled -> stays on the physics-only kit,
-# so the RTX renderer (which crashes on driver 595) never loads.
+# Force HEADLESS + no cameras so AppLauncher loads the physics-only kit
+# (isaaclab.python.headless.kit). The full/GUI kit starts the RTX renderer, which
+# segfaults on driver 595 in rtx.scenedb. Headless physics runs fine on 595.
+args.headless = True
+args.enable_cameras = False
 simulation_app = AppLauncher(args).app
 
 import numpy as np
