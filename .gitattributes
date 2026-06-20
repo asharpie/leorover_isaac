@@ -1,0 +1,3 @@
+# Keep shell scripts LF-only so they run on the Linux lab box even when edited or
+# committed from Windows. Without this, a CRLF leo.sh fails with "bad interpreter: ^M".
+*.sh text eol=lf
