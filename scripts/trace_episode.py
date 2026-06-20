@@ -114,20 +114,41 @@ def main():
     wps = raw._wps[e, :K, :2].detach().cpu().numpy()
     goal = raw._goal_xy[e].detach().cpu().numpy()
 
+    # population tracker: each env's BEST progress + whether it ever hit the goal,
+    # robust to auto-reset (a reset zeros progress, but the pre-reset peak is already
+    # captured since we take the max every step). Works at any --num_envs, so a single
+    # 4096-env run tells us whether a KNOWN-GOOD checkpoint stalls at TRAINING scale.
+    N = raw.num_envs
+    max_prog_all = torch.zeros(N, device=raw.device)
+    ever_success = torch.zeros(N, dtype=torch.bool, device=raw.device)
+
     rows = []
     for t in range(args.steps):
         with torch.inference_mode():
             actions = policy(obs)
             obs, _, dones, _ = wrapped.step(actions)
+            max_prog_all = torch.maximum(max_prog_all, raw._path_progress())
+            ever_success |= raw._is_goal_reached().bool()
+        # Isaac DirectRLEnv auto-resets on done INSIDE step(), so the readouts below
+        # would report the NEXT episode's spawn (origin, wp~0, progress~0). Detect done
+        # FIRST and stop without recording that reset row, otherwise the summary's
+        # end-xy / final progress / path-driven describe the respawn, not the episode
+        # that just finished (e.g. a goal-reaching run looks like it ended at the origin
+        # with 3.8% progress). The last recorded row (t-1) is the near-terminal state.
+        if bool(dones[e]):
+            print(f"  [trace] env {e} episode ended at step {t} "
+                  f"(termination + auto-reset); summary covers through step {t-1}")
+            break
         pos_local, yaw, fwd_vel, _ = raw._kin()
         cte, _ = raw._true_cte_and_along()
         prog = raw._path_progress()
         rows.append((t, float(pos_local[e, 0]), float(pos_local[e, 1]),
                      float(yaw[e]), float(fwd_vel[e]),
                      int(raw._cur_idx[e]), float(cte[e]), float(prog[e])))
-        if bool(dones[e]):
-            print(f"  [trace] env {e} episode ended at step {t}")
-            break
+
+    if not rows:
+        print(f"  [trace] env {e} ended before any step was recorded; nothing to plot.")
+        env.close(); simulation_app.close(); return
 
     outdir = os.path.join(os.path.dirname(args.checkpoint) or ".", "eval_trace")
     os.makedirs(outdir, exist_ok=True)
@@ -153,6 +174,15 @@ def main():
     print(f"  final / max progress : {rows[-1][7]:.1f}%  /  {max(r[7] for r in rows):.1f}%")
     print(f"  mean |fwd_vel|        : {np.mean([abs(r[4]) for r in rows]):.4f} m/s "
           f"(stagnation threshold 0.02)")
+    mp = max_prog_all.detach().cpu().numpy()
+    print(f"\n========== POPULATION over all {N} envs (best progress reached) ==========")
+    print(f"  ever reached goal    : {int(ever_success.sum())} / {N}  "
+          f"({100.0*float(ever_success.float().mean()):.2f}%)")
+    print(f"  best path_progress   : mean {mp.mean():.1f}%  median {float(np.median(mp)):.1f}%  "
+          f"p90 {float(np.percentile(mp,90)):.1f}%  max {mp.max():.1f}%")
+    print(f"  envs >25% progress   : {int((mp > 25).sum())} / {N}")
+    print(f"  envs <5%  progress   : {int((mp < 5).sum())} / {N}")
+    print( "=================================================================\n")
     try:
         import matplotlib; matplotlib.use("Agg")
         import matplotlib.pyplot as plt
