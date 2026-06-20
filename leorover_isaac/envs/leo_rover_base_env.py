@@ -225,11 +225,19 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # the dominant dense term) and/or lower ppo_w_cte. Example:
         #   LEOROVER_W_PROGRESS=150 LEOROVER_W_CTE=2
         import os as _os
+        # HYBRID note: at the ~0.035 m/s crawl the forward rewards are tiny while the
+        # residual EFFORT penalty r_eff=-ppo_w_effort*(rvn^2+rwn^2) dominates (~-0.14/step
+        # for a random residual), so the optimum is to ZERO the residual and park (the
+        # overnight collapse). Cut ppo_w_effort/ppo_w_smoothness and raise ppo_w_progress:
+        #   LEOROVER_W_EFFORT=0.05 LEOROVER_W_PROGRESS=150 LEOROVER_W_SMOOTH=0.1
         for _key, _envvar in (("ppo_w_progress", "LEOROVER_W_PROGRESS"),
                               ("ppo_w_cte", "LEOROVER_W_CTE"),
                               ("ppo_w_velocity", "LEOROVER_W_VELOCITY"),
                               ("ppo_w_alive", "LEOROVER_W_ALIVE"),
-                              ("ppo_cte_ok_threshold", "LEOROVER_CTE_OK")):
+                              ("ppo_cte_ok_threshold", "LEOROVER_CTE_OK"),
+                              ("ppo_w_effort", "LEOROVER_W_EFFORT"),
+                              ("ppo_w_smoothness", "LEOROVER_W_SMOOTH"),
+                              ("ppo_w_heading", "LEOROVER_W_HEADING")):
             _v = _os.environ.get(_envvar)
             if _v is not None:
                 self._ppo[_key] = float(_v)

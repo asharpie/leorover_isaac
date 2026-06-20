@@ -28,6 +28,18 @@ value loss coef, max grad norm, net arch) is copied from config.py verbatim.
 from __future__ import annotations
 
 import config as cfg_mod
+import os as _os
+
+# Shell-tunable training knobs (no code edit) for fixing the from-scratch stall:
+#   LEOROVER_NUM_STEPS  rollout length per env (default 32). The +200 success lands
+#                       ~1400 steps in, so a 32-step rollout never contains it and the
+#                       terminal reward can't propagate; PyBullet used full-episode
+#                       rollouts. Raise this (e.g. 96-256) so the value fn sees further.
+#   LEOROVER_ENT_COEF   PPO entropy coef (default PPO_ENT_COEF=0.001). Raise (e.g.
+#                       0.005-0.01) to hold exploration so std doesn't collapse to
+#                       ~0.02 before the policy learns to drive.
+_NUM_STEPS_PER_ENV = int(_os.environ.get("LEOROVER_NUM_STEPS", 32))
+_ENT_COEF = float(_os.environ.get("LEOROVER_ENT_COEF", cfg_mod.PPO_ENT_COEF))
 
 # rsl_rl config dataclasses moved namespaces across Isaac Lab versions.
 try:
@@ -94,7 +106,7 @@ if _RSL:
         value_loss_coef=cfg_mod.PPO_VF_COEF,           # 0.5
         use_clipped_value_loss=True,
         clip_param=cfg_mod.PPO_CLIP_RANGE,             # 0.2
-        entropy_coef=cfg_mod.PPO_ENT_COEF,             # 0.001
+        entropy_coef=_ENT_COEF,                        # PPO_ENT_COEF=0.001; LEOROVER_ENT_COEF overrides
         num_learning_epochs=cfg_mod.PPO_N_EPOCHS,      # 5
         num_mini_batches=4,
         learning_rate=cfg_mod.PPO_LEARNING_RATE,       # 1.5e-4
@@ -107,7 +119,7 @@ if _RSL:
 
     @configclass
     class LeoRoverPPORunnerCfg(RslRlOnPolicyRunnerCfg):
-        num_steps_per_env = 32
+        num_steps_per_env = _NUM_STEPS_PER_ENV   # default 32; LEOROVER_NUM_STEPS overrides
         max_iterations = 30000          # ~ matches the multi-million-step PyBullet runs
         save_interval = 200
         experiment_name = "leo_rover"
