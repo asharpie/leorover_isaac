@@ -75,6 +75,11 @@ _TASKS = {
 def main():
     env_cls, cfg_cls, runner_cfg_cls = _TASKS[args.task]
     cfg = cfg_cls(); cfg.scene.num_envs = args.num_envs
+    # SimulationCfg.device defaults to cuda:0 even when AppLauncher gets --device=cpu,
+    # so propagate it. --device cpu => CPU PhysX, which needs no GPU memory (handy
+    # when the GPU is occupied by a training run).
+    if getattr(args, "device", None):
+        cfg.sim.device = args.device
     env = env_cls(cfg=cfg, render_mode=None)
     raw = env
 
