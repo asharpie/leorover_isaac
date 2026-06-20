@@ -72,7 +72,16 @@ _TASKS = {
 }
 
 
+def _mark(msg):
+    """Flushed phase marker so the redirected log shows exactly how far we got.
+    USD/MDL load warnings otherwise bury the last real phase before a hang, making
+    a still-loading run look identical to one that died in scene build."""
+    print(f"[trace] {msg}", flush=True)
+
+
 def main():
+    _mark(f"main start: task={args.task} device={getattr(args,'device',None)} "
+          f"num_envs={args.num_envs} steps={args.steps}")
     env_cls, cfg_cls, runner_cfg_cls = _TASKS[args.task]
     cfg = cfg_cls(); cfg.scene.num_envs = args.num_envs
     # SimulationCfg.device defaults to cuda:0 even when AppLauncher gets --device=cpu,
@@ -80,8 +89,10 @@ def main():
     # when the GPU is occupied by a training run).
     if getattr(args, "device", None):
         cfg.sim.device = args.device
+    _mark("creating env (scene build + terrain cook + robot spawn)...")
     env = env_cls(cfg=cfg, render_mode=None)
     raw = env
+    _mark("env created OK")
 
     agent_cfg = runner_cfg_cls()
     if handle_deprecated_rsl_rl_cfg is not None:
@@ -89,11 +100,14 @@ def main():
     wrapped = RslRlVecEnvWrapper(env)
     runner = OnPolicyRunner(wrapped, agent_cfg.to_dict(), log_dir=None,
                             device=str(wrapped.unwrapped.device))
+    _mark(f"loading checkpoint {os.path.basename(args.checkpoint)}...")
     runner.load(args.checkpoint)
     policy = runner.get_inference_policy(device=wrapped.unwrapped.device)
+    _mark("checkpoint loaded; resetting env...")
 
     obs, _ = wrapped.get_observations()
     e = args.env
+    _mark(f"stepping {args.steps} steps on env {e}...")
 
     # reference path (env-local frame) + goal for the traced env, grabbed now
     K = int(raw._num_wp[e].item())
