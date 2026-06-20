@@ -73,6 +73,15 @@ def _build_cfg():
                   f"Run inside the Isaac Lab env to use the articulation.")
             return None
 
+    # Wheel velocity-servo gains, overridable from the shell for tuning. The
+    # default 1000/1000 is an aggressive servo: a 0.67 rad/s velocity error commands
+    # ~670 N.m, slamming the wheel so it overshoots and oscillates (seen as +-2 m/s
+    # velocity swings in a trace). Sweep down for a stable, steadily-tracking servo:
+    #   LEOROVER_WHEEL_EFFORT=50 LEOROVER_WHEEL_DAMPING=20
+    import os as _os
+    _wheel_eff = float(_os.environ.get("LEOROVER_WHEEL_EFFORT", 1000.0))
+    _wheel_damp = float(_os.environ.get("LEOROVER_WHEEL_DAMPING", 1000.0))
+
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
@@ -111,10 +120,10 @@ def _build_cfg():
                 # value starved the wheels -> rover barely moved -> 0% success. Match
                 # PyBullet: high effort ceiling + stiff velocity tracking. (Lower toward
                 # 100/100 if you see wheel jitter.)
-                effort_limit_sim=1000.0, effort_limit=1000.0,
+                effort_limit_sim=_wheel_eff, effort_limit=_wheel_eff,
                 velocity_limit_sim=100.0, velocity_limit=100.0,
                 stiffness=0.0,
-                damping=1000.0,
+                damping=_wheel_damp,
             )),
         },
     )
