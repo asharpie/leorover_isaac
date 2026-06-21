@@ -30,6 +30,10 @@ parser.add_argument("--checkpoint", required=True)
 parser.add_argument("--num_envs", type=int, default=4)
 parser.add_argument("--steps", type=int, default=600)
 parser.add_argument("--env", type=int, default=0, help="which env index to trace")
+parser.add_argument("--zero-residual", action="store_true",
+                    help="feed a ZERO PPO residual = evaluate the bare LQR baseline "
+                         "(checkpoint weights are then irrelevant; use any checkpoint). "
+                         "Isolates how much of the result is the LQR vs the PPO residual.")
 
 try:
     from isaaclab.app import AppLauncher
@@ -126,6 +130,8 @@ def main():
     for t in range(args.steps):
         with torch.inference_mode():
             actions = policy(obs)
+            if args.zero_residual:
+                actions = torch.zeros_like(actions)   # pure-LQR baseline (no PPO residual)
             obs, _, dones, _ = wrapped.step(actions)
             max_prog_all = torch.maximum(max_prog_all, raw._path_progress())
             ever_success |= raw._is_goal_reached().bool()
