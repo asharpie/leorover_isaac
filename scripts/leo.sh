@@ -56,6 +56,7 @@ ${b}MONITOR${x}
   leo curve          show success% + reward + std over recent iterations
   leo gpu            GPU usage + which training processes are yours
   leo checkpoints    list saved checkpoints of the latest run
+  leo report         full performance report (success, progress, reward, CTE trends) — copy-pasteable
 
 ${b}EVALUATE${x}
   leo trace [N]      population eval of the latest hybrid checkpoint (N = model number, else newest)
@@ -182,9 +183,10 @@ cmd_trace() {
   say "envs=$envs steps=$steps  (read the POPULATION block at the end, not env 0)"
   "$LAUNCH" scripts/trace_episode.py --task Isaac-LeoRover-Mars-Hybrid-v0 \
             --checkpoint "$ckpt" --num_envs "$envs" --steps "$steps"
-  say "top-down plot: ${run%/}/eval_trace/trace.png"
-  say "copy it to your laptop (run on the LAPTOP):"
-  say "   scp irl@10.115.102.210:${run%/}/eval_trace/trace.png ."
+  local png="$REPO/${run%/}/eval_trace/trace.png"   # absolute, so scp works from the laptop
+  say "top-down plot: $png"
+  say "copy it to your laptop (run this ON THE LAPTOP):"
+  say "   scp irl@10.115.102.210:$png ."
 }
 
 cmd_tb() {
@@ -197,6 +199,18 @@ cmd_tb() {
   "$ISAAC_PY" -m tensorboard.main --logdir "$run" --port 6006
 }
 
+cmd_report() {
+  local alias="${1:-hybrid}" run
+  run="$(latest_run "$(task_exp "$alias")")"
+  [ -z "$run" ] && { err "no runs yet for '$alias'"; exit 1; }
+  local csv="${run%/}/csv/episode_metrics.csv"
+  [ ! -f "$csv" ] && { err "no episode_metrics.csv yet (first episodes still finishing)"; exit 1; }
+  python3 "$REPO/scripts/leo_report.py" "$csv"
+  echo
+  say "for a full visual analysis, send Claude this file (run on your LAPTOP):"
+  say "   scp irl@10.115.102.210:$REPO/${run%/}/csv/episode_metrics.csv ."
+}
+
 # --- dispatch ----------------------------------------------------------------
 case "${1:-help}" in
   train)              shift; cmd_train "$@";;
@@ -205,6 +219,7 @@ case "${1:-help}" in
   gpu|status)         cmd_gpu;;
   stop|kill)          cmd_stop;;
   checkpoints|ckpts)  shift; cmd_checkpoints "$@";;
+  report|stats)       shift; cmd_report "$@";;
   trace|eval)         shift; cmd_trace "$@";;
   tb|tensorboard)     cmd_tb;;
   help|-h|--help|"")   usage;;

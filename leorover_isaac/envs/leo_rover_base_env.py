@@ -265,6 +265,11 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._last_residual = torch.zeros(n, 2, device=dev)
         self._last_lookahead = torch.full((n, 6), -1.0, device=dev)
         self._prev_progress = torch.zeros(n, device=dev)
+        # terminal-state snapshots for the metrics recorder, captured in _get_dones
+        # BEFORE Isaac's auto-reset (otherwise the recorder reads the respawn and every
+        # episode logs path_progress~3.8% / success=0 regardless of real performance).
+        self._log_progress = torch.zeros(n, device=dev)
+        self._log_goal = torch.zeros(n, dtype=torch.bool, device=dev)
         self._stagnation = torch.zeros(n, dtype=torch.long, device=dev)
         self._recovery_sustain = torch.zeros(n, dtype=torch.long, device=dev)
         self._sim_time = torch.zeros(n, device=dev)
@@ -623,6 +628,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._ep_steps += 1.0
         goal = self._is_goal_reached()
         self._ep_success = self._ep_success | goal
+        # snapshot terminal progress + goal BEFORE the post-step auto-reset, so the
+        # metrics recorder logs the REAL episode outcome instead of the respawn.
+        self._log_progress = self._path_progress()
+        self._log_goal = goal
 
         terminated = (goal | self._is_flipped() | self._is_oob()
                       | self._is_cte_too_large() | self._is_stagnation_timeout())

@@ -118,8 +118,14 @@ class EpisodeMetricsRecorder:
 
     def _flush(self, idx):
         env = self.env
-        progress = env._path_progress()
-        success = env._is_goal_reached().float()
+        # Use the terminal snapshots captured in _get_dones BEFORE Isaac's auto-reset.
+        # Reading _path_progress()/_is_goal_reached() here would return the respawn
+        # state (path_progress~3.8%, goal=False) for the just-finished episodes.
+        progress = getattr(env, "_log_progress", None)
+        if progress is None:
+            progress = env._path_progress()
+        _goal = getattr(env, "_log_goal", None)
+        success = _goal.float() if _goal is not None else env._is_goal_reached().float()
         terr_int = getattr(env, "_terrain_intensity", torch.zeros(self.n, device=self.device))
         fric_int = getattr(env, "_friction_intensity", torch.zeros(self.n, device=self.device))
 
