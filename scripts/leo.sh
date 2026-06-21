@@ -25,8 +25,15 @@ LOGDIR="$HOME/leo_logs"; mkdir -p "$LOGDIR"
 ISAAC_PY="$HOME/Desktop/Core_libraries/NVIDIA_GPU/IsaacLab/_isaac_sim/python.sh"
 GPU_TOTAL_MIB=24564                        # RTX 4090
 
-# --- the validated reward fix (2026-06-20: 0% -> ~50% success). --raw skips it.
-FIX_ENV=(LEOROVER_W_EFFORT=0.05 LEOROVER_W_PROGRESS=150 LEOROVER_W_SMOOTH=0.1 LEOROVER_ENT_COEF=0.005)
+# --- the validated reward fix (2026-06-20: parked -> 59% success). --raw skips it.
+FIX_ENV=(LEOROVER_W_EFFORT=0.05 LEOROVER_W_PROGRESS=150 LEOROVER_W_SMOOTH=0.1)
+# exploration + rollout, overridable per run with --ent / --rollout.
+#   ent 0.001 (2026-06-21, down from 0.005): lets action-std fall so the policy sharpens
+#     instead of failing ~40% of episodes from exploration noise -> higher success.
+#   rollout 32 default; --rollout 64 gives the value fn more of the ~1400-step episode
+#     so the terminal +200 success propagates (PyBullet used full-episode rollouts).
+DEFAULT_ENT=0.001
+BOX_HOST="irl@10.115.102.210"                 # how YOUR laptop reaches the box (for scp helpers)
 
 # --- task alias -> (gym id, log/experiment folder) ---------------------------
 task_id()  { case "$1" in hybrid) echo Isaac-LeoRover-Mars-Hybrid-v0;; ppo) echo Isaac-LeoRover-Mars-v0;; flat) echo Isaac-LeoRover-Flat-v0;; *) echo "";; esac; }
@@ -48,8 +55,10 @@ ${b}leo${x} - Leo Rover Isaac control
 ${b}TRAIN${x}
   leo train hybrid [--envs N] [--iters N] [--raw] [--fg]
   leo train ppo    [...]              pure-PPO (no LQR baseline)
-      defaults: --envs 4096, the validated reward fix ON, runs in background + logged
-      --raw  use stock config weights (no fix)     --fg  run in foreground (don't detach)
+      defaults: --envs 4096, reward fix ON, ent 0.001, rollout 32, background + logged
+      --ent E       PPO entropy coef (lower = sharper / less noise; default 0.001)
+      --rollout N   steps per update (higher = better long-horizon credit; default 32)
+      --raw  stock config (no fix)     --fg  foreground (don't detach)
 
 ${b}MONITOR${x}
   leo watch          live-tail the most recent training log (Ctrl-C stops watching, not training)
@@ -57,6 +66,7 @@ ${b}MONITOR${x}
   leo gpu            GPU usage + which training processes are yours
   leo checkpoints    list saved checkpoints of the latest run
   leo report         full performance report (success, progress, reward, CTE trends) — copy-pasteable
+  leo csv            print the exact timestamped scp line to pull the latest CSV to your laptop
 
 ${b}EVALUATE${x}
   leo trace [N]      population eval of the latest hybrid checkpoint (N = model number, else newest)
@@ -80,12 +90,14 @@ cmd_train() {
   local alias="${1:-}"; [ $# -gt 0 ] && shift
   local gym exp; gym="$(task_id "$alias")"; exp="$(task_exp "$alias")"
   [ -z "$gym" ] && { err "unknown task '${alias:-}'  (use: hybrid | ppo | flat)"; exit 1; }
-  local envs=4096 iters="" raw=0 fg=0
+  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout=""
   while [ $# -gt 0 ]; do case "$1" in
-    --envs)  envs="${2:?}"; shift 2;;
-    --iters) iters="${2:?}"; shift 2;;
-    --raw)   raw=1; shift;;
-    --fg)    fg=1; shift;;
+    --envs)    envs="${2:?}"; shift 2;;
+    --iters)   iters="${2:?}"; shift 2;;
+    --ent)     ent="${2:?}"; shift 2;;
+    --rollout) rollout="${2:?}"; shift 2;;
+    --raw)     raw=1; shift;;
+    --fg)      fg=1; shift;;
     *) err "unknown flag '$1'"; exit 1;;
   esac; done
 
@@ -99,11 +111,16 @@ cmd_train() {
 
   local args=(--task "$gym" --num_envs "$envs" --headless)
   [ -n "$iters" ] && args+=(--max_iterations "$iters")
-  local pre=(); [ "$raw" -eq 0 ] && pre=("${FIX_ENV[@]}")
+  local pre=()
+  if [ "$raw" -eq 0 ]; then
+    pre=("${FIX_ENV[@]}" "LEOROVER_ENT_COEF=$ent")
+    [ -n "$rollout" ] && pre+=("LEOROVER_NUM_STEPS=$rollout")
+  fi
 
   local log="$LOGDIR/${exp}_$(date +%Y%m%d_%H%M%S).log"
   say "task   : $gym"
   say "envs   : $envs    reward: $([ "$raw" -eq 1 ] && echo 'STOCK (--raw)' || echo 'FIXED')"
+  [ "$raw" -eq 0 ] && say "ent    : $ent    rollout(num_steps): ${rollout:-32}"
   say "log    : $log"
   warn "starting in 5s - Ctrl-C now to abort"; sleep 5
 
@@ -211,6 +228,21 @@ cmd_report() {
   say "   scp irl@10.115.102.210:$REPO/${run%/}/csv/episode_metrics.csv ."
 }
 
+cmd_csv() {
+  local alias="${1:-hybrid}" run
+  run="$(latest_run "$(task_exp "$alias")")"
+  [ -z "$run" ] && { err "no runs yet for '$alias'"; exit 1; }
+  local csv="$REPO/${run%/}/csv/episode_metrics.csv"
+  [ ! -f "$csv" ] && { err "no episode_metrics.csv yet"; exit 1; }
+  local ts; ts="$(date +%Y%m%d_%H%M%S)"
+  echo "${b}Copy-paste these two lines into PowerShell on your LAPTOP:${x}"
+  echo
+  echo "mkdir \$HOME\\Downloads\\leo_csvs -Force"
+  echo "scp ${BOX_HOST}:$csv \$HOME\\Downloads\\leo_csvs\\episode_matrix_${ts}.csv"
+  echo
+  say "lands at  Downloads\\leo_csvs\\episode_matrix_${ts}.csv  (latest $alias run)"
+}
+
 # --- dispatch ----------------------------------------------------------------
 case "${1:-help}" in
   train)              shift; cmd_train "$@";;
@@ -220,6 +252,7 @@ case "${1:-help}" in
   stop|kill)          cmd_stop;;
   checkpoints|ckpts)  shift; cmd_checkpoints "$@";;
   report|stats)       shift; cmd_report "$@";;
+  csv|getcsv)         shift; cmd_csv "$@";;
   trace|eval)         shift; cmd_trace "$@";;
   tb|tensorboard)     cmd_tb;;
   help|-h|--help|"")   usage;;
