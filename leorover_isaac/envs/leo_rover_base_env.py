@@ -312,14 +312,33 @@ class LeoRoverBaseEnv(DirectRLEnv):
             self._t_rows, self._t_cols = self._terrain_origins.shape[0], self._terrain_origins.shape[1]
 
         # --- vectorized controller ---
+        # LEOROVER_SPEED_SCALE (default 1.0 = unchanged): the kinematic wheel_radius
+        # (0.3) vs the physical wheel (0.0625) makes the rover physically travel at
+        # ~20% of its commanded velocity, so it cruises ~0.035 m/s -- barely above the
+        # 0.02 m/s stagnation kill-threshold. Result (from episode_metrics): ~15% of
+        # rovers never clear the threshold and get stagnation-killed at step ~617 with
+        # <5% progress, and the slow tail can't cover the path in the step budget. The
+        # time cap kills almost nobody (1.3%). Scaling shrinks the kinematic radius and
+        # raises the wheel-speed clip together (max reachable v_ref = max_wheel_speed *
+        # wheel_radius = 0.4 stays fixed), so the SAME commanded velocity (<=0.4 m/s) is
+        # actually achieved. scale=4.8 -> full 0.4 m/s. 1.0 reproduces prior runs exactly.
+        import os as _os
+        _spd = max(1.0, float(_os.environ.get("LEOROVER_SPEED_SCALE", "1.0")))
         self._controller = VectorizedLQR(
             n, device=dev,
+            wheel_radius=0.3 / _spd,
+            max_wheel_speed=1.333 * _spd,
+            max_wheel_accel=1.333 * _spd,
             max_residual_velocity=cfg_mod.MAX_RESIDUAL_VELOCITY,
             max_residual_omega=cfg_mod.MAX_RESIDUAL_OMEGA,
             max_velocity_clip=cfg_mod.MAX_VELOCITY_CLIP,
             max_omega_clip=cfg_mod.MAX_OMEGA_CLIP,
             use_lqr_baseline=self.cfg.use_lqr_baseline,
         )
+        if _spd != 1.0:
+            print(f"[speed] LEOROVER_SPEED_SCALE={_spd}  wheel_radius={0.3/_spd:.4f}  "
+                  f"max_wheel_speed={1.333*_spd:.3f} rad/s  (cruise target ~{0.083*_spd:.3f} m/s, "
+                  f"stagnation kill-line 0.02)")
 
         # Precompute the fixed/random path bank on CPU once (waypoints + profile).
         self._build_path_bank()

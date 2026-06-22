@@ -58,6 +58,7 @@ ${b}TRAIN${x}
       defaults: --envs 4096, reward fix ON, ent 0.001, rollout 32, background + logged
       --ent E       PPO entropy coef (lower = sharper / less noise; default 0.001)
       --rollout N   steps per update (higher = better long-horizon credit; default 32)
+      --speed S     rover speed multiplier (1=crawl default, 4.8=full 0.4 m/s; fixes stagnation kills)
       --raw  stock config (no fix)     --fg  foreground (don't detach)
 
 ${b}MONITOR${x}
@@ -90,12 +91,13 @@ cmd_train() {
   local alias="${1:-}"; [ $# -gt 0 ] && shift
   local gym exp; gym="$(task_id "$alias")"; exp="$(task_exp "$alias")"
   [ -z "$gym" ] && { err "unknown task '${alias:-}'  (use: hybrid | ppo | flat)"; exit 1; }
-  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout=""
+  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout="" speed=1
   while [ $# -gt 0 ]; do case "$1" in
     --envs)    envs="${2:?}"; shift 2;;
     --iters)   iters="${2:?}"; shift 2;;
     --ent)     ent="${2:?}"; shift 2;;
     --rollout) rollout="${2:?}"; shift 2;;
+    --speed)   speed="${2:?}"; shift 2;;
     --raw)     raw=1; shift;;
     --fg)      fg=1; shift;;
     *) err "unknown flag '$1'"; exit 1;;
@@ -116,11 +118,13 @@ cmd_train() {
     pre=("${FIX_ENV[@]}" "LEOROVER_ENT_COEF=$ent")
     [ -n "$rollout" ] && pre+=("LEOROVER_NUM_STEPS=$rollout")
   fi
+  [ "$speed" != "1" ] && pre+=("LEOROVER_SPEED_SCALE=$speed")
 
   local log="$LOGDIR/${exp}_$(date +%Y%m%d_%H%M%S).log"
   say "task   : $gym"
   say "envs   : $envs    reward: $([ "$raw" -eq 1 ] && echo 'STOCK (--raw)' || echo 'FIXED')"
   [ "$raw" -eq 0 ] && say "ent    : $ent    rollout(num_steps): ${rollout:-32}"
+  say "speed  : ${speed}x  (1=crawl ~0.035 m/s, 4.8=full ~0.4 m/s; lifts rovers off the 0.02 stagnation kill-line)"
   say "log    : $log"
   warn "starting in 5s - Ctrl-C now to abort"; sleep 5
 
@@ -184,10 +188,11 @@ cmd_checkpoints() {
 }
 
 cmd_trace() {
-  local model="" envs=1024 steps=1500
+  local model="" envs=1024 steps=1500 zr=""
   while [ $# -gt 0 ]; do case "$1" in
     --envs)  envs="${2:?}"; shift 2;;
     --steps) steps="${2:?}"; shift 2;;
+    --zero-residual|--lqr) zr="--zero-residual"; shift;;
     [0-9]*)  model="$1"; shift;;
     *) err "unknown arg '$1'"; exit 1;;
   esac; done
@@ -197,9 +202,10 @@ cmd_trace() {
   if [ -n "$model" ]; then ckpt="${run%/}/model_${model}.pt"; else ckpt="$(latest_ckpt "$run")"; fi
   [ -z "$ckpt" ] || [ ! -f "$ckpt" ] && { err "checkpoint not found: ${ckpt:-<none>} (try 'leo checkpoints')"; exit 1; }
   say "evaluating $ckpt"
+  [ -n "$zr" ] && say "ZERO-RESIDUAL: pure LQR baseline (PPO output forced to 0)"
   say "envs=$envs steps=$steps  (read the POPULATION block at the end, not env 0)"
   "$LAUNCH" scripts/trace_episode.py --task Isaac-LeoRover-Mars-Hybrid-v0 \
-            --checkpoint "$ckpt" --num_envs "$envs" --steps "$steps"
+            --checkpoint "$ckpt" --num_envs "$envs" --steps "$steps" $zr
   local png="$REPO/${run%/}/eval_trace/trace.png"   # absolute, so scp works from the laptop
   say "top-down plot: $png"
   say "copy it to your laptop (run this ON THE LAPTOP):"
