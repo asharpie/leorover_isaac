@@ -324,13 +324,21 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # actually achieved. scale=4.8 -> full 0.4 m/s. 1.0 reproduces prior runs exactly.
         import os as _os
         _spd = max(1.0, float(_os.environ.get("LEOROVER_SPEED_SCALE", "1.0")))
+        # LEOROVER_RES_SCALE (default 1.0): multiplies the PPO residual authority
+        # (max_residual_velocity/omega). A zero-residual trace showed the pure LQR
+        # baseline hits ~94% success while the trained hybrid residual DRAGS IT DOWN
+        # to ~43%: the noisy residual (std~0.74) shoves a good LQR trajectory off-path
+        # and into stalls (pure-LQR parks 1.2% of envs vs the hybrid's ~15%). Shrinking
+        # the bound caps how much damage the residual can do (0.0 == pure LQR); the goal
+        # is a small, sharp residual that helps where LQR struggles instead of adding noise.
+        _rscale = max(0.0, float(_os.environ.get("LEOROVER_RES_SCALE", "1.0")))
         self._controller = VectorizedLQR(
             n, device=dev,
             wheel_radius=0.3 / _spd,
             max_wheel_speed=1.333 * _spd,
             max_wheel_accel=1.333 * _spd,
-            max_residual_velocity=cfg_mod.MAX_RESIDUAL_VELOCITY,
-            max_residual_omega=cfg_mod.MAX_RESIDUAL_OMEGA,
+            max_residual_velocity=cfg_mod.MAX_RESIDUAL_VELOCITY * _rscale,
+            max_residual_omega=cfg_mod.MAX_RESIDUAL_OMEGA * _rscale,
             max_velocity_clip=cfg_mod.MAX_VELOCITY_CLIP,
             max_omega_clip=cfg_mod.MAX_OMEGA_CLIP,
             use_lqr_baseline=self.cfg.use_lqr_baseline,
@@ -339,6 +347,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
             print(f"[speed] LEOROVER_SPEED_SCALE={_spd}  wheel_radius={0.3/_spd:.4f}  "
                   f"max_wheel_speed={1.333*_spd:.3f} rad/s  (cruise target ~{0.083*_spd:.3f} m/s, "
                   f"stagnation kill-line 0.02)")
+        if _rscale != 1.0:
+            print(f"[residual] LEOROVER_RES_SCALE={_rscale}  max_residual_v="
+                  f"{cfg_mod.MAX_RESIDUAL_VELOCITY*_rscale:.4f}  max_residual_w="
+                  f"{cfg_mod.MAX_RESIDUAL_OMEGA*_rscale:.4f}  (0.0 = pure LQR)")
 
         # Precompute the fixed/random path bank on CPU once (waypoints + profile).
         self._build_path_bank()
