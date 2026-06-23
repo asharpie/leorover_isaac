@@ -63,6 +63,7 @@ except Exception as exc:  # pragma: no cover
 import gymnasium as gym
 import torch
 
+import config as cfg_mod
 import leorover_isaac  # registers the gym tasks
 from leorover_isaac.tasks.leo_rover_agents import (
     LeoRoverFlatPPORunnerCfg, LeoRoverMarsPPORunnerCfg, LeoRoverMarsHybridPPORunnerCfg,
@@ -95,6 +96,36 @@ _TASKS = {
     "Isaac-LeoRover-Mars-v0":        (LeoRoverMarsEnv, LeoRoverMarsEnvCfg, LeoRoverMarsPPORunnerCfg),
     "Isaac-LeoRover-Mars-Hybrid-v0": (LeoRoverMarsHybridEnv, LeoRoverMarsHybridEnvCfg, LeoRoverMarsHybridPPORunnerCfg),
 }
+
+
+@torch.inference_mode()
+def _adr_eval(wrapped, raw, det_policy, steps):
+    """Run the policy DETERMINISTICALLY (no exploration noise) over the current
+    [0, ADR ceiling] terrain band and return (success_rate, mean_cte). Terrain is
+    pinned via _eval_levels and CSV logging suppressed via _skip_record; both are
+    restored afterward. This is the noise-free competence signal the curriculum
+    needs -- the stochastic rollout success understates it badly enough to freeze
+    the curriculum, especially for pure PPO."""
+    crow = raw.adr_max_level()
+    raw._eval_levels = torch.arange(0, crow + 1, device=raw.device, dtype=torch.long)
+    raw._skip_record = True
+    try:
+        raw.reset()
+        obs, _ = wrapped.get_observations()
+        n = raw.num_envs
+        ever = torch.zeros(n, dtype=torch.bool, device=raw.device)
+        cte_sum = torch.zeros(n, device=raw.device)
+        cnt = 0
+        for _ in range(int(steps)):
+            obs, _, _, _ = wrapped.step(det_policy(obs))
+            ever |= raw._is_goal_reached().bool()
+            c, _ = raw._true_cte_and_along()
+            cte_sum += c.abs()
+            cnt += 1
+        return float(ever.float().mean().item()), float((cte_sum / max(cnt, 1)).mean().item())
+    finally:
+        raw._eval_levels = None
+        raw._skip_record = False
 
 
 def main():
@@ -139,6 +170,7 @@ def main():
         agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, _metadata.version("rsl-rl-lib"))
 
     # Wrap for rsl_rl and run PPO (clip_actions matches the official workflow)
+    raw_env = env  # the underlying DirectRLEnv, before the rsl_rl wrapper
     env = RslRlVecEnvWrapper(env, clip_actions=getattr(agent_cfg, "clip_actions", None))
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=run_dir,
                             device=getattr(agent_cfg, "device", None) or str(env.unwrapped.device))
@@ -146,7 +178,34 @@ def main():
         os.environ.setdefault("WANDB_PROJECT", "leorover_isaac")
 
     print(f"[train] task={args.task} num_envs={args.num_envs} -> logging to {run_dir}")
-    runner.learn(num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True)
+
+    total_iters = agent_cfg.max_iterations
+    # Deterministic-eval-driven ADR: when the env is in external mode, the noisy
+    # rollout success must not move the curriculum -- we drive it from a periodic
+    # noise-free eval instead (see config.ADR_DETERMINISTIC_EVAL).
+    adr_eval_on = getattr(raw_env, "_adr_external", False) and getattr(raw_env, "_adr", None) is not None
+    if not adr_eval_on:
+        runner.learn(num_learning_iterations=total_iters, init_at_random_ep_len=True)
+    else:
+        every = int(os.environ.get("LEOROVER_ADR_EVAL_EVERY", getattr(cfg_mod, "ADR_EVAL_EVERY_ITERS", 100)))
+        eval_steps = int(os.environ.get("LEOROVER_ADR_EVAL_STEPS", getattr(cfg_mod, "ADR_EVAL_STEPS", 1500)))
+        print(f"[train] ADR is DETERMINISTIC-EVAL driven: eval every {every} iters, "
+              f"{eval_steps} steps/eval. Stochastic rollout success will NOT move the curriculum.")
+        det_policy = runner.get_inference_policy(device=str(env.unwrapped.device))
+        done_iters, first = 0, True
+        while done_iters < total_iters:
+            n = min(every, total_iters - done_iters)
+            runner.learn(num_learning_iterations=n, init_at_random_ep_len=first)
+            first = False
+            done_iters += n
+            runner.save(os.path.join(run_dir, f"model_{done_iters}.pt"))
+            try:
+                sr, cte = _adr_eval(env, raw_env, det_policy, eval_steps)
+                ev = raw_env.apply_adr_eval(sr, cte)
+                print(f"[ADR-eval] iter {done_iters}: det success {sr:.0%}, CTE {cte:.3f} "
+                      f"-> {ev}, terrain_max now {raw_env._adr.terrain_max:.0f}%", flush=True)
+            except Exception as exc:  # never let the eval break training
+                print(f"[ADR-eval] skipped at iter {done_iters}: {exc}", flush=True)
 
     runner.save(os.path.join(run_dir, "model_final.pt"))
     print(f"[train] done. checkpoints + episode_metrics.csv in {run_dir}")

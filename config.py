@@ -97,6 +97,18 @@ ADR_STEP_DOWN = 3.0              # Decrease by 3% per regression (symmetric with
 ADR_MIN_EPISODES_PER_LEVEL = 50  # Must train 50 eps at each level before evaluating
 ADR_COOLDOWN_EPISODES = 30       # 30 eps cooldown — lets VecNormalize adapt after difficulty change
 
+# --- Deterministic-eval-driven ADR (2026-06-22) -----------------------------
+# The stochastic rollout success rate understates true competence under
+# exploration noise (~57% stochastic vs ~92% deterministic), so it sits in the
+# 50-70% dead zone and the curriculum freezes. When ADR_DETERMINISTIC_EVAL is on,
+# train.py runs the policy NOISE-FREE every ADR_EVAL_EVERY_ITERS iterations over
+# the current [0, ceiling] terrain band and advances/regresses the curriculum on
+# THAT measurement instead. Makes ADR work correctly for hybrid AND pure PPO.
+# Env-var overrides: LEOROVER_ADR_EVAL (0/1), LEOROVER_ADR_EVAL_EVERY, LEOROVER_ADR_EVAL_STEPS.
+ADR_DETERMINISTIC_EVAL = True    # drive the curriculum off a periodic deterministic eval
+ADR_EVAL_EVERY_ITERS   = 100     # run the eval every N training iterations (lower = more responsive, more overhead)
+ADR_EVAL_STEPS         = 1500    # sim steps per eval (~one full episode so successes complete)
+
 # =============================================================================
 # ISAAC LAB TERRAIN BANK (Isaac-only; ignored by the PyBullet stack)
 # =============================================================================

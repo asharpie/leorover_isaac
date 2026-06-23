@@ -277,9 +277,18 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # Per-env terrain/friction intensity (for logging + ADR).
         self._terrain_intensity = torch.zeros(n, device=dev)
         self._friction_intensity = torch.full((n,), 0.5 * (cfg_mod.TRAINING_FRICTION_MIN + cfg_mod.TRAINING_FRICTION_MAX), device=dev)
-        # Eval-only: 1-D tensor of difficulty rows to sweep (set by evaluate_policy.py);
-        # None during training so the ADR ceiling drives terrain as usual.
+        # Eval-only: 1-D tensor of difficulty rows to sweep (set by evaluate_policy.py
+        # and by train.py's deterministic ADR eval); None during normal training so the
+        # ADR ceiling drives terrain as usual.
         self._eval_levels = None
+        # When the deterministic-eval ADR is active, the noisy per-episode rollout success
+        # must NOT move the curriculum (train.py drives it from a noise-free eval instead).
+        import os as _os2
+        self._adr_external = (str(_os2.environ.get("LEOROVER_ADR_EVAL",
+                              "1" if getattr(cfg_mod, "ADR_DETERMINISTIC_EVAL", False) else "0")) not in ("0", "", "false", "False"))
+        # Recorder hook: when True, EpisodeMetricsRecorder skips logging (used so the
+        # periodic deterministic eval doesn't pollute the training episode_metrics.csv).
+        self._skip_record = False
 
         # --- ADR curriculum (global rolling-window ceiling) ---
         self._ep_cte_sum = torch.zeros(n, device=dev)
@@ -737,8 +746,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
     def _report_adr_and_resample(self, env_ids):
         """Report finished episodes to ADR, advance the curriculum, and reassign
         each resetting env to a fresh random terrain patch in [0, ADR ceiling]."""
-        # 1. report each finished episode (sequential, like the SB3 ADRCallback)
-        if self._adr is not None:
+        # 1. report each finished episode (sequential, like the SB3 ADRCallback).
+        # Skipped when _adr_external: the deterministic-eval driver in train.py owns the
+        # curriculum, so the noisy stochastic rollout success must not move it.
+        if self._adr is not None and not self._adr_external:
             steps = self._ep_steps[env_ids].clamp(min=1.0)
             mean_cte = (self._ep_cte_sum[env_ids] / steps).detach().cpu().numpy()
             succ = self._ep_success[env_ids].detach().cpu().numpy()
@@ -831,3 +842,14 @@ class LeoRoverBaseEnv(DirectRLEnv):
     @property
     def adr_stats(self):
         return self._adr.get_stats() if self._adr is not None else {}
+
+    def adr_max_level(self) -> int:
+        """Public accessor for the current ADR difficulty-row ceiling (for the eval driver)."""
+        return self._adr_max_level()
+
+    def apply_adr_eval(self, success_rate: float, mean_cte: float) -> str:
+        """Advance/regress the curriculum from a noise-free deterministic eval
+        measured by train.py. No-op if there's no ADR. Returns the event string."""
+        if self._adr is None:
+            return "hold"
+        return self._adr.force_eval(float(success_rate), float(mean_cte))

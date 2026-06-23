@@ -82,6 +82,10 @@ class EpisodeMetricsRecorder:
     @torch.no_grad()
     def record_step(self, reward: torch.Tensor, done: torch.Tensor):
         env = self.env
+        # Skip while the deterministic ADR eval is running, so those noise-free
+        # eval episodes never land in the training episode_metrics.csv.
+        if getattr(env, "_skip_record", False):
+            return
         cte, _ = env._true_cte_and_along()
         cte = cte.abs()
         # residual norms (hybrid); for pure PPO the residual IS the command -> 0 contribution

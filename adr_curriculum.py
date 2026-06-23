@@ -243,6 +243,48 @@ class ADRCurriculum:
 
         return "hold"
 
+    def force_eval(self, success_rate: float, mean_cte: float) -> str:
+        """Drive the curriculum from an EXTERNAL, noise-free success measurement
+        (a periodic DETERMINISTIC eval of the policy) instead of the per-episode
+        rolling window of stochastic rollout episodes.
+
+        Why: during training the policy acts stochastically (exploration std),
+        so its rollout success badly understates true competence (e.g. ~57%
+        stochastic vs ~92% deterministic). That noisy rate sits in the dead zone
+        between the advance and regress thresholds, so the curriculum freezes and
+        never ramps terrain -- which is fatal for pure PPO and silently caps the
+        hybrid. Feeding a deterministic eval here lets the curriculum advance on
+        the policy's real competence. Bypasses the window/cooldown gates on
+        purpose (the caller controls cadence). Returns "advance"/"regress"/"hold".
+        """
+        old_terrain = self.terrain_max
+        if (success_rate >= self.config.success_rate_threshold and
+                mean_cte <= self.config.mean_cte_threshold):
+            self.terrain_max = min(self.terrain_max + self.config.intensity_step_up,
+                                   self.config.terrain_intensity_max_limit)
+            self.friction_max = min(self.friction_max + self.config.intensity_step_up * 0.5,
+                                    self.config.friction_intensity_max_limit)
+            self.num_advances += 1
+            event = "advance"
+        elif (success_rate < self.config.regression_success_threshold or
+              mean_cte > self.config.regression_cte_threshold):
+            self.terrain_max = max(self.terrain_max - self.config.intensity_step_down,
+                                   self.config.terrain_intensity_max_start)
+            self.friction_max = max(self.friction_max - self.config.intensity_step_down * 0.5,
+                                    self.config.friction_intensity_max_start)
+            self.num_regressions += 1
+            event = "regress"
+        else:
+            event = "hold"
+        self.difficulty_history.append(
+            (self.total_episodes, self.terrain_max, self.friction_max, f"eval:{event}"))
+        arrow = "->" if event != "hold" else "=="
+        print(f"  [ADR-eval] {event.upper():7s} terrain_max {old_terrain:.0f}% {arrow} "
+              f"{self.terrain_max:.0f}%   (DETERMINISTIC success={success_rate:.0%}, "
+              f"CTE={mean_cte:.3f}, thresh adv>={self.config.success_rate_threshold:.0%}/"
+              f"reg<{self.config.regression_success_threshold:.0%})", flush=True)
+        return event
+
     def get_progress_pct(self) -> float:
         """Current difficulty as percentage of maximum."""
         total_range = self.config.terrain_intensity_max_limit - self.config.terrain_intensity_max_start
