@@ -63,7 +63,6 @@ except Exception as exc:  # pragma: no cover
 import gymnasium as gym
 import torch
 
-import config as cfg_mod
 import leorover_isaac  # registers the gym tasks
 from leorover_isaac.tasks.leo_rover_agents import (
     LeoRoverFlatPPORunnerCfg, LeoRoverMarsPPORunnerCfg, LeoRoverMarsHybridPPORunnerCfg,
@@ -187,8 +186,11 @@ def main():
     if not adr_eval_on:
         runner.learn(num_learning_iterations=total_iters, init_at_random_ep_len=True)
     else:
-        every = int(os.environ.get("LEOROVER_ADR_EVAL_EVERY", getattr(cfg_mod, "ADR_EVAL_EVERY_ITERS", 100)))
-        eval_steps = int(os.environ.get("LEOROVER_ADR_EVAL_STEPS", getattr(cfg_mod, "ADR_EVAL_STEPS", 1500)))
+        # defaults mirror config.ADR_EVAL_EVERY_ITERS / ADR_EVAL_STEPS; kept as literals here
+        # so train.py never does a bare `import config` (which collides with Isaac's bundled
+        # cv2/config.py once Isaac has been imported). Override via the env vars below.
+        every = int(os.environ.get("LEOROVER_ADR_EVAL_EVERY", "100"))
+        eval_steps = int(os.environ.get("LEOROVER_ADR_EVAL_STEPS", "1500"))
         print(f"[train] ADR is DETERMINISTIC-EVAL driven: eval every {every} iters, "
               f"{eval_steps} steps/eval. Stochastic rollout success will NOT move the curriculum.")
         det_policy = runner.get_inference_policy(device=str(env.unwrapped.device))

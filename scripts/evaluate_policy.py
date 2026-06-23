@@ -70,7 +70,10 @@ import torch
 import importlib.metadata as _md
 from datetime import datetime
 
-import config as cfg_mod
+# Terrain difficulty is a 0-100% scale (config.ADR_TERRAIN_MAX_LIMIT). Kept as a literal
+# so this script never does a bare `import config`, which once Isaac is loaded resolves to
+# Isaac's bundled cv2/config.py and crashes.
+_TERRAIN_MAX_PCT = 100.0
 import leorover_isaac  # noqa: F401  (registers tasks)
 from leorover_isaac.tasks.leo_rover_agents import (
     LeoRoverFlatPPORunnerCfg, LeoRoverMarsPPORunnerCfg, LeoRoverMarsHybridPPORunnerCfg,
@@ -118,11 +121,11 @@ def main():
     rows_total = max(int(raw._t_rows), 1)
     denom = max(rows_total - 1, 1)
     want = [float(x) for x in str(args.levels).split(",") if x.strip() != ""]
-    rows = sorted({min(denom, max(0, round(p / cfg_mod.ADR_TERRAIN_MAX_LIMIT * denom))) for p in want})
-    actual = [round(r / denom * cfg_mod.ADR_TERRAIN_MAX_LIMIT, 1) for r in rows]
+    rows = sorted({min(denom, max(0, round(p / _TERRAIN_MAX_PCT * denom))) for p in want})
+    actual = [round(r / denom * _TERRAIN_MAX_PCT, 1) for r in rows]
     raw._adr = None  # stop the curriculum from moving / printing during eval
     raw._eval_levels = torch.tensor(rows, device=raw.device, dtype=torch.long)
-    _mark(f"terrain rows {rows} -> intensities {actual}% (of {cfg_mod.ADR_TERRAIN_MAX_LIMIT:.0f}% max)")
+    _mark(f"terrain rows {rows} -> intensities {actual}% (of {_TERRAIN_MAX_PCT:.0f}% max)")
     # re-place every env onto an eval level before we attach the recorder. If the
     # reset API balks, fall back to natural auto-resets (only the first ~1 episode
     # per env then starts at the construction level instead of an eval level).
