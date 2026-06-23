@@ -48,12 +48,13 @@ _HEADER = (
 
 
 class EpisodeMetricsRecorder:
-    def __init__(self, log_dir: str, env, max_residual_v: float = None, max_residual_w: float = None):
+    def __init__(self, log_dir: str, env, max_residual_v: float = None, max_residual_w: float = None,
+                 filename: str = "episode_metrics.csv"):
         self.env = env
         self.n = env.num_envs
         self.device = env.device
         os.makedirs(log_dir, exist_ok=True)
-        self.csv_path = os.path.join(log_dir, "episode_metrics.csv")
+        self.csv_path = os.path.join(log_dir, filename)
         with open(self.csv_path, "w") as f:
             f.write(_HEADER)
         self.episode_count = 0

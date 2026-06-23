@@ -73,6 +73,12 @@ ${b}MONITOR${x}
 ${b}EVALUATE${x}
   leo trace [N]      population eval of the latest hybrid checkpoint (N = model number, else newest)
                      reports how many of the rovers reach the goal + saves a top-down plot
+  leo trace --lqr    same, but force the PPO residual to 0 = evaluate the bare LQR baseline
+  leo eval  <hybrid|lqr|ppo> [--levels 10,20,..] [--envs N] [--steps N]
+                     DETERMINISTIC held-out eval over a terrain sweep -> writes evals/<algo>_<ts>.csv
+                     (the deployable number; strips the exploration noise the training CSV shows)
+  leo compare        side-by-side success/progress-by-terrain of the latest hybrid/lqr/ppo eval CSVs
+  leo evalcsv <algo> print the scp line to pull an eval CSV to your laptop
   leo tb             launch TensorBoard for the latest run (prints the SSH tunnel command)
 
 ${b}CONTROL${x}
@@ -85,6 +91,72 @@ ${b}Typical session${x}
   leo trace            # evaluate the newest checkpoint at scale
   leo stop             # end it cleanly when done
 EOF
+}
+
+# -----------------------------------------------------------------------------
+# Deterministic held-out evaluation across a terrain sweep -> evals/<algo>_<ts>.csv
+cmd_eval() {
+  local alias="${1:-hybrid}"; [ $# -gt 0 ] && shift
+  local levels="10,20,30,40,50,60,70,80" envs=1024 steps=6000
+  while [ $# -gt 0 ]; do case "$1" in
+    --levels) levels="${2:?}"; shift 2;;
+    --envs)   envs="${2:?}"; shift 2;;
+    --steps)  steps="${2:?}"; shift 2;;
+    *) err "unknown flag '$1'"; exit 1;;
+  esac; done
+  local task exp zero=""
+  case "$alias" in
+    hybrid) task="Isaac-LeoRover-Mars-Hybrid-v0"; exp="leo_rover_mars_hybrid";;
+    lqr)    task="Isaac-LeoRover-Mars-Hybrid-v0"; exp="leo_rover_mars_hybrid"; zero="--zero-residual";;
+    ppo)    task="Isaac-LeoRover-Mars-v0";        exp="leo_rover_mars";;
+    *) err "unknown eval target '$alias'  (use: hybrid | lqr | ppo)"; exit 1;;
+  esac
+  local run; run="$(latest_run "$exp")"
+  [ -z "$run" ] && { err "no '$exp' runs yet to evaluate (train one first)"; exit 1; }
+  local ckpt; ckpt="$(latest_ckpt "$run")"
+  { [ -z "$ckpt" ] || [ ! -f "$ckpt" ]; } && { err "no checkpoint in ${run} (try 'leo checkpoints')"; exit 1; }
+  local ts out; ts="$(date +%Y%m%d_%H%M%S)"; out="$REPO/evals/${alias}_${ts}.csv"; mkdir -p "$REPO/evals"
+  local used; used="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')"
+  say "eval   : ${b}$alias${x}    task=$task"
+  say "ckpt   : $ckpt"
+  say "levels : $levels    envs=$envs steps=$steps"
+  say "out    : $out"
+  if [ -n "${used:-}" ] && [ "$used" -gt 3000 ]; then
+    warn "GPU already has >3 GB in use - if a training job is mid-iteration, stop it first (eval needs the GPU)."
+  fi
+  warn "starting in 4s - Ctrl-C to abort"; sleep 4
+  "$LAUNCH" scripts/evaluate_policy.py --task "$task" --checkpoint "$ckpt" \
+            --levels "$levels" --num_envs "$envs" --steps "$steps" $zero --out "$out"
+  echo
+  say "done -> $out"
+  say "pull to laptop:  ${b}leo evalcsv $alias${x}     compare all three:  ${b}leo compare${x}"
+}
+
+# Side-by-side comparison of the latest hybrid / lqr / ppo eval CSVs
+cmd_compare() {
+  local d="$REPO/evals" a f args=()
+  [ ! -d "$d" ] && { err "no evals/ yet - run 'leo eval hybrid' (and lqr / ppo) first"; exit 1; }
+  for a in hybrid lqr ppo; do
+    f="$(ls -1t "$d/${a}_"*.csv 2>/dev/null | head -1)"
+    [ -n "$f" ] && args+=("$a=$f")
+  done
+  [ ${#args[@]} -eq 0 ] && { err "no eval CSVs in $d - run 'leo eval <algo>' first"; exit 1; }
+  say "comparing latest eval of: $(for _a in "${args[@]}"; do echo -n "${_a%%=*} "; done)"
+  python3 "$REPO/scripts/eval_report.py" "${args[@]}"
+}
+
+# Print the scp line to pull an eval CSV to the laptop
+cmd_evalcsv() {
+  local alias="${1:-hybrid}" f
+  f="$(ls -1t "$REPO/evals/${alias}_"*.csv 2>/dev/null | head -1)"
+  [ -z "$f" ] && { err "no eval CSV for '$alias' yet (run 'leo eval $alias')"; exit 1; }
+  local ts; ts="$(date +%Y%m%d_%H%M%S)"
+  echo "${b}Copy-paste into PowerShell on your LAPTOP:${x}"
+  echo
+  echo "mkdir \$HOME\\Downloads\\leo_csvs -Force"
+  echo "scp ${BOX_HOST}:$f \$HOME\\Downloads\\leo_csvs\\eval_${alias}_${ts}.csv"
+  echo
+  say "lands at  Downloads\\leo_csvs\\eval_${alias}_${ts}.csv  (latest $alias eval)"
 }
 
 # -----------------------------------------------------------------------------
@@ -263,7 +335,10 @@ case "${1:-help}" in
   checkpoints|ckpts)  shift; cmd_checkpoints "$@";;
   report|stats)       shift; cmd_report "$@";;
   csv|getcsv)         shift; cmd_csv "$@";;
-  trace|eval)         shift; cmd_trace "$@";;
+  trace)              shift; cmd_trace "$@";;
+  eval)               shift; cmd_eval "$@";;
+  compare|cmp)        cmd_compare;;
+  evalcsv)            shift; cmd_evalcsv "$@";;
   tb|tensorboard)     cmd_tb;;
   help|-h|--help|"")   usage;;
   *) err "unknown command '$1'"; echo; usage; exit 1;;

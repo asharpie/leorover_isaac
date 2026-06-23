@@ -277,6 +277,9 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # Per-env terrain/friction intensity (for logging + ADR).
         self._terrain_intensity = torch.zeros(n, device=dev)
         self._friction_intensity = torch.full((n,), 0.5 * (cfg_mod.TRAINING_FRICTION_MIN + cfg_mod.TRAINING_FRICTION_MAX), device=dev)
+        # Eval-only: 1-D tensor of difficulty rows to sweep (set by evaluate_policy.py);
+        # None during training so the ADR ceiling drives terrain as usual.
+        self._eval_levels = None
 
         # --- ADR curriculum (global rolling-window ceiling) ---
         self._ep_cte_sum = torch.zeros(n, device=dev)
@@ -747,8 +750,17 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # 2. reassign terrain patches (random row up to ceiling, random column)
         if self._terrain_origins is not None and self._t_rows > 0:
             k = len(env_ids)
-            max_level = self._adr_max_level()
-            levels = torch.randint(0, max_level + 1, (k,), device=self.device)
+            # EVAL OVERRIDE: if _eval_levels is set (a 1-D tensor of difficulty rows),
+            # each resetting env draws its terrain row uniformly from that fixed set
+            # instead of [0, ADR ceiling]. This pins difficulty to a controlled sweep
+            # (each level gets even coverage) while paths/columns stay random, so
+            # evaluate_policy.py can measure success-vs-terrain across all algorithms.
+            _evl = getattr(self, "_eval_levels", None)
+            if _evl is not None and len(_evl) > 0:
+                levels = _evl[torch.randint(0, len(_evl), (k,), device=self.device)]
+            else:
+                max_level = self._adr_max_level()
+                levels = torch.randint(0, max_level + 1, (k,), device=self.device)
             cols = torch.randint(0, self._t_cols, (k,), device=self.device)
             new_origins = self._terrain_origins[levels, cols]            # [k,3]
             self._terrain.env_origins[env_ids] = new_origins
