@@ -111,17 +111,27 @@ def _adr_eval(wrapped, raw, det_policy, steps):
     try:
         raw.reset()
         obs, _ = wrapped.get_observations()
-        n = raw.num_envs
-        ever = torch.zeros(n, dtype=torch.bool, device=raw.device)
-        cte_sum = torch.zeros(n, device=raw.device)
+        n_done = torch.zeros((), device=raw.device)
+        n_succ = torch.zeros((), device=raw.device)
+        cte_sum = torch.zeros(raw.num_envs, device=raw.device)
         cnt = 0
         for _ in range(int(steps)):
-            obs, _, _, _ = wrapped.step(det_policy(obs))
-            ever |= raw._is_goal_reached().bool()
+            obs, _, dones, _ = wrapped.step(det_policy(obs))
+            d = dones.bool()
+            # CRITICAL: read the goal flag that _get_dones snapshotted BEFORE Isaac's
+            # auto-reset (_log_goal), NOT _is_goal_reached() -- the latter runs after the
+            # successful env has already respawned at the start, so it reads False and the
+            # eval measures ~0% success, which is what kept the curriculum pinned at 10%.
+            goal = getattr(raw, "_log_goal", None)
+            if goal is not None:
+                n_succ += (goal.bool() & d).sum()
+            n_done += d.sum()
             c, _ = raw._true_cte_and_along()
             cte_sum += c.abs()
             cnt += 1
-        return float(ever.float().mean().item()), float((cte_sum / max(cnt, 1)).mean().item())
+        sr = float((n_succ / torch.clamp(n_done, min=1.0)).item())
+        cte = float((cte_sum / max(cnt, 1)).mean().item())
+        return sr, cte
     finally:
         raw._eval_levels = None
         raw._skip_record = False
