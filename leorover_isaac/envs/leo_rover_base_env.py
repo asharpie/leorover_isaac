@@ -336,14 +336,15 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # actually achieved. scale=4.8 -> full 0.4 m/s. 1.0 reproduces prior runs exactly.
         import os as _os
         _spd = max(1.0, float(_os.environ.get("LEOROVER_SPEED_SCALE", "1.0")))
-        # LEOROVER_RES_SCALE (default 1.0): multiplies the PPO residual authority
-        # (max_residual_velocity/omega). A zero-residual trace showed the pure LQR
-        # baseline hits ~94% success while the trained hybrid residual DRAGS IT DOWN
-        # to ~43%: the noisy residual (std~0.74) shoves a good LQR trajectory off-path
-        # and into stalls (pure-LQR parks 1.2% of envs vs the hybrid's ~15%). Shrinking
-        # the bound caps how much damage the residual can do (0.0 == pure LQR); the goal
-        # is a small, sharp residual that helps where LQR struggles instead of adding noise.
-        _rscale = max(0.0, float(_os.environ.get("LEOROVER_RES_SCALE", "1.0")))
+        # LEOROVER_RES_SCALE (DEFAULT 0.33 as of 2026-06-24): multiplies the PPO residual
+        # authority (max_residual_velocity/omega). Full authority (1.0) lets the noisy
+        # residual shove a good LQR trajectory off-path -> a deterministic trace dropped
+        # from the pure-LQR ~94% to ~43%, and full-residual training oscillates wildly.
+        # 0.33 was validated stable (deterministic ~88-92%) and is now the default so
+        # training, `leo trace`, and `leo eval` all use the SAME residual scale (a policy
+        # trained at 0.33 but evaluated at 1.0 would have a 3x-too-large residual). 0.0 ==
+        # pure LQR. Override with the env var / `leo train --residual F`.
+        _rscale = max(0.0, float(_os.environ.get("LEOROVER_RES_SCALE", "0.33")))
         self._controller = VectorizedLQR(
             n, device=dev,
             wheel_radius=0.3 / _spd,

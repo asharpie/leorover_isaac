@@ -83,7 +83,10 @@ ADR_TERRAIN_MAX_START = 10.0     # v32 (2026-04-17): lowered 35 → 10. Diagnost
                                   #   terrain roughness becomes a factor. Will ramp to 100 via ADR.
                                   # Previous: 35.0 (v27), 60.0 (v26), 15.0 (v25)
 ADR_TERRAIN_MAX_LIMIT = 100.0    # Maximum reachable upper bound
-ADR_SUCCESS_THRESHOLD = 0.70     # v32: 0.85 → 0.70. With easier starting terrain, earlier advancement
+ADR_SUCCESS_THRESHOLD = 0.60     # 2026-06-24: 0.70 → 0.60. The deterministic ADR eval reads ~66% goal-
+                                 # success while median path_progress is ~97% (the rover handles the terrain;
+                                 # the strict 0.2m goal tolerance gates the rest), so 0.70 froze the curriculum
+                                 # just below the bar. 0.60 advances at genuine competence; regress stays 0.50.
                                   #   keeps the curriculum progressing; final mastery happens at the
                                   #   higher levels. Too strict a threshold stalls curriculum on lower
                                   #   levels while the policy overfits. VertiSelector / RL-Wheeled-

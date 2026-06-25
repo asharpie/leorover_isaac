@@ -59,7 +59,7 @@ ${b}TRAIN${x}
       --ent E       PPO entropy coef (lower = sharper / less noise; default 0.001)
       --rollout N   steps per update (higher = better long-horizon credit; default 32)
       --speed S     rover speed multiplier (1=crawl default, 4.8=full 0.4 m/s; fixes stagnation kills)
-      --residual F  PPO residual authority (1=full default, 0=pure LQR; shrink so it stops fighting LQR)
+      --residual F  PPO residual authority (default 0.33 = stable; 1=full/unstable, 0=pure LQR)
       --raw  stock config (no fix)     --fg  foreground (don't detach)
 
 ${b}MONITOR${x}
@@ -164,7 +164,7 @@ cmd_train() {
   local alias="${1:-}"; [ $# -gt 0 ] && shift
   local gym exp; gym="$(task_id "$alias")"; exp="$(task_exp "$alias")"
   [ -z "$gym" ] && { err "unknown task '${alias:-}'  (use: hybrid | ppo | flat)"; exit 1; }
-  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout="" speed=1 residual=1
+  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout="" speed=1 residual=0.33
   while [ $# -gt 0 ]; do case "$1" in
     --envs)     envs="${2:?}"; shift 2;;
     --iters)    iters="${2:?}"; shift 2;;
@@ -193,14 +193,14 @@ cmd_train() {
     [ -n "$rollout" ] && pre+=("LEOROVER_NUM_STEPS=$rollout")
   fi
   [ "$speed" != "1" ] && pre+=("LEOROVER_SPEED_SCALE=$speed")
-  [ "$residual" != "1" ] && pre+=("LEOROVER_RES_SCALE=$residual")
+  pre+=("LEOROVER_RES_SCALE=$residual")   # always pass it; default 0.33 (env default matches)
 
   local log="$LOGDIR/${exp}_$(date +%Y%m%d_%H%M%S).log"
   say "task   : $gym"
   say "envs   : $envs    reward: $([ "$raw" -eq 1 ] && echo 'STOCK (--raw)' || echo 'FIXED')"
   [ "$raw" -eq 0 ] && say "ent    : $ent    rollout(num_steps): ${rollout:-32}"
   say "speed  : ${speed}x  (1=crawl ~0.035 m/s, 4.8=full ~0.4 m/s; lifts rovers off the 0.02 stagnation kill-line)"
-  say "residual: ${residual}x  (1=full PPO authority, 0=pure LQR ~94%; shrink so the residual stops fighting the LQR)"
+  say "residual: ${residual}x  (default 0.33 = capped PPO authority, stable + ~88-92%; 1=full, 0=pure LQR)"
   say "log    : $log"
   warn "starting in 5s - Ctrl-C now to abort"; sleep 5
 
