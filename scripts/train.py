@@ -111,25 +111,31 @@ def _adr_eval(wrapped, raw, det_policy, steps):
     try:
         raw.reset()
         obs, _ = wrapped.get_observations()
-        n_done = torch.zeros((), device=raw.device)
-        n_succ = torch.zeros((), device=raw.device)
-        cte_sum = torch.zeros(raw.num_envs, device=raw.device)
+        n = raw.num_envs
+        ever_done = torch.zeros(n, dtype=torch.bool, device=raw.device)   # finished its 1st episode?
+        first_succ = torch.zeros(n, dtype=torch.bool, device=raw.device)  # 1st episode reached goal?
+        cte_sum = torch.zeros(n, device=raw.device)
         cnt = 0
         for _ in range(int(steps)):
             obs, _, dones, _ = wrapped.step(det_policy(obs))
             d = dones.bool()
-            # CRITICAL: read the goal flag that _get_dones snapshotted BEFORE Isaac's
-            # auto-reset (_log_goal), NOT _is_goal_reached() -- the latter runs after the
-            # successful env has already respawned at the start, so it reads False and the
-            # eval measures ~0% success, which is what kept the curriculum pinned at 10%.
+            # Score ONE episode per rover (the first after reset). Counting every completion
+            # over the window over-weights fast failures -- a parker cycles ~2.5 episodes
+            # while a finisher does ~1, so per-episode success understates per-rover success
+            # (a true ~81% reads as ~66%) and stalls the curriculum. Read the goal flag from
+            # the PRE-auto-reset snapshot (_log_goal), not _is_goal_reached() (post-respawn).
             goal = getattr(raw, "_log_goal", None)
+            newly = d & (~ever_done)
             if goal is not None:
-                n_succ += (goal.bool() & d).sum()
-            n_done += d.sum()
+                first_succ |= (newly & goal.bool())
+            ever_done |= d
             c, _ = raw._true_cte_and_along()
             cte_sum += c.abs()
             cnt += 1
-        sr = float((n_succ / torch.clamp(n_done, min=1.0)).item())
+            if bool(ever_done.all()):   # every rover has finished one episode -> done
+                break
+        denom = ever_done.sum().clamp(min=1)
+        sr = float((first_succ.sum().float() / denom.float()).item())
         cte = float((cte_sum / max(cnt, 1)).mean().item())
         return sr, cte
     finally:
@@ -200,7 +206,7 @@ def main():
         # so train.py never does a bare `import config` (which collides with Isaac's bundled
         # cv2/config.py once Isaac has been imported). Override via the env vars below.
         every = int(os.environ.get("LEOROVER_ADR_EVAL_EVERY", "100"))
-        eval_steps = int(os.environ.get("LEOROVER_ADR_EVAL_STEPS", "1500"))
+        eval_steps = int(os.environ.get("LEOROVER_ADR_EVAL_STEPS", "2050"))   # > 2000 cap so every rover's first episode completes (early-exits once all done)
         print(f"[train] ADR is DETERMINISTIC-EVAL driven: eval every {every} iters, "
               f"{eval_steps} steps/eval. Stochastic rollout success will NOT move the curriculum.")
         det_policy = runner.get_inference_policy(device=str(env.unwrapped.device))
@@ -213,6 +219,15 @@ def main():
             runner.save(os.path.join(run_dir, f"model_{done_iters}.pt"))
             try:
                 sr, cte = _adr_eval(env, raw_env, det_policy, eval_steps)
+                # The eval reset the envs mid-episode while logging was suppressed, leaving the
+                # recorder's per-env step/CTE/reward accumulators STALE. Clear them so the next
+                # logged episodes start clean instead of double-counting across the eval boundary
+                # (that staleness was producing impossible >2000-step episodes and the violent
+                # spikes in the CTE/reward/length curves).
+                try:
+                    recorder._reset_accum(slice(None))
+                except Exception:
+                    pass
                 ev = raw_env.apply_adr_eval(sr, cte)
                 print(f"[ADR-eval] iter {done_iters}: det success {sr:.0%}, CTE {cte:.3f} "
                       f"-> {ev}, terrain_max now {raw_env._adr.terrain_max:.0f}%", flush=True)
