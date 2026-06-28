@@ -74,6 +74,7 @@ ${b}EVALUATE${x}
   leo trace [N]      population eval of the latest hybrid checkpoint (N = model number, else newest)
                      reports how many of the rovers reach the goal + saves a top-down plot
   leo trace --lqr    same, but force the PPO residual to 0 = evaluate the bare LQR baseline
+  leo diagnose [--terrain P] [--lqr]   classify WHY rovers stall (wedged/idle/off-path/slow) + plot
   leo eval  <hybrid|lqr|ppo> [--levels 10,20,..] [--envs N] [--steps N]
                      DETERMINISTIC held-out eval over a terrain sweep -> writes evals/<algo>_<ts>.csv
                      (the deployable number; strips the exploration noise the training CSV shows)
@@ -288,6 +289,30 @@ cmd_trace() {
   say "   scp irl@10.115.102.210:$png ."
 }
 
+# Diagnose WHY rovers stall (commanded-vs-actual velocity classification + plot)
+cmd_diagnose() {
+  local model="" terr=20 lqr=""
+  while [ $# -gt 0 ]; do case "$1" in
+    --terrain) terr="${2:?}"; shift 2;;
+    --lqr|--zero-residual) lqr="--zero-residual"; shift;;
+    [0-9]*)  model="$1"; shift;;
+    *) err "unknown arg '$1'"; exit 1;;
+  esac; done
+  local run; run="$(latest_run leo_rover_mars_hybrid)"
+  [ -z "$run" ] && { err "no hybrid runs yet"; exit 1; }
+  local ckpt
+  if [ -n "$model" ]; then ckpt="${run%/}/model_${model}.pt"; else ckpt="$(latest_ckpt "$run")"; fi
+  { [ -z "$ckpt" ] || [ ! -f "$ckpt" ]; } && { err "checkpoint not found (try 'leo checkpoints')"; exit 1; }
+  say "diagnosing stalls in $ckpt"
+  say "terrain=${terr}%   ${lqr:+(pure LQR baseline)}"
+  "$LAUNCH" scripts/diagnose_stalls.py --task Isaac-LeoRover-Mars-Hybrid-v0 \
+            --checkpoint "$ckpt" --terrain "$terr" $lqr
+  local png="$REPO/${run%/}/stall_diag/stall_diag.png"
+  echo
+  say "read the VERDICT printed above; visual is at: $png"
+  say "pull it (run ON THE LAPTOP):  scp ${BOX_HOST}:$png ."
+}
+
 cmd_tb() {
   local run; run="$(latest_run leo_rover_mars_hybrid)"; [ -z "$run" ] && { err "no runs yet"; exit 1; }
   [ ! -e "$ISAAC_PY" ] && { err "Isaac python not found at $ISAAC_PY"; exit 1; }
@@ -336,6 +361,7 @@ case "${1:-help}" in
   report|stats)       shift; cmd_report "$@";;
   csv|getcsv)         shift; cmd_csv "$@";;
   trace)              shift; cmd_trace "$@";;
+  diagnose|stalls)    shift; cmd_diagnose "$@";;
   eval)               shift; cmd_eval "$@";;
   compare|cmp)        cmd_compare;;
   evalcsv)            shift; cmd_evalcsv "$@";;
