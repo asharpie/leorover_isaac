@@ -102,7 +102,16 @@ class VectorizedLQR:
         self.yaw_smoothing_alpha = float(yaw_smoothing_alpha)
 
         # Per control step (10 substeps in PyBullet): max_wheel_accel * dt * 50.
-        self.max_delta_wheel = self.max_wheel_accel * self.sim_timestep * 50.0
+        # LEOROVER_WHEEL_ACCEL overrides the per-control-step wheel-speed delta (rad/s).
+        # The default (1.333) lets the wheel jump 0 -> 0.667 in ONE step; on the light
+        # rover in PhysX that slams the wheels faster than traction can build at launch,
+        # so ~20% of rovers pitch ~5-10 deg and jam with the wheels slipping (the flat-
+        # ground spawn-parks in the stall trace). A small value (e.g. 0.1) ramps the
+        # launch over ~7 steps so traction builds before full speed.
+        import os as _os_accel
+        _acc = _os_accel.environ.get("LEOROVER_WHEEL_ACCEL")
+        self.max_delta_wheel = (float(_acc) if _acc
+                                else self.max_wheel_accel * self.sim_timestep * 50.0)
 
         # --- Build the K(v_ref) lookup table with the reference scipy solver ---
         self._v_grid = torch.linspace(v_table_min, v_table_max, v_table_steps,
