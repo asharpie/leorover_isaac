@@ -103,7 +103,12 @@ MAX_WAYPOINTS = 256   # generous padding cap (random paths can exceed 80 waypoin
 # Spawn height above the env-origin terrain. The rover's base_link rests ~0.2 m
 # up, so a 0.3 m clearance starts it just above rest (a ~0.1 m PhysX settle in the
 # first step) rather than the old 0.8 m free-fall. Override via config if needed.
-SPAWN_CLEARANCE = float(getattr(cfg_mod, "SPAWN_CLEARANCE", 0.30))
+# LEOROVER_SPAWN_CLEARANCE overrides it to test the launch-failure hypothesis
+# (~20% of rovers high-center after the drop): set ~0.21 (just above rest) for a
+# near-zero drop, so the rover starts settled wheels-down instead of dropping.
+import os as _os_spawn
+SPAWN_CLEARANCE = float(_os_spawn.environ.get(
+    "LEOROVER_SPAWN_CLEARANCE", getattr(cfg_mod, "SPAWN_CLEARANCE", 0.30)))
 
 # Friction range mapped from the config friction-intensity sweep (0.3 -> 2.0).
 _FRIC_LO = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MIN)
