@@ -160,6 +160,22 @@ def main():
     print(f"   final wheel-height spread = {wz[-1].max()-wz[-1].min():.3f} m "
           f"(0 = flat/level, large = tilted onto a subset of wheels)", flush=True)
 
+    # CONTRAST: a SUCCESS rover should sit ~LEVEL (small spread). If the parked rover's
+    # spread is much larger, the parked rovers are rocking/tilting on the triangulated
+    # terrain mesh (a rigid rover cannot rest tilted on a truly flat floor).
+    succ = np.where(finalprog > 50.0)[0]
+    if len(succ):
+        es = int(succ[0])
+        pes = P[:, es, :, :] - origin[es][None, None, :]
+        wzs = pes[:, wheel_ids, 2]
+        sp_p = float(wz[-1].max() - wz[-1].min())
+        sp_s = float(wzs[-1].max() - wzs[-1].min())
+        print(f"\n[viz] CONTRAST  parked env {e} spread {sp_p:.3f} m   vs   "
+              f"success env {es} (prog {finalprog[es]:.0f}%) spread {sp_s:.3f} m")
+        print(f"[viz]   success wheel heights {[round(float(wzs[-1,j]),3) for j in range(len(wheel_ids))]}")
+        print(f"[viz]   => if parked >> success, the rover is rocking/tilting on the terrain MESH "
+              f"(PyBullet used a smooth heightfield).", flush=True)
+
     # --- matplotlib reconstruction (no renderer) ---
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     fig = plt.figure(figsize=(14, 10))
