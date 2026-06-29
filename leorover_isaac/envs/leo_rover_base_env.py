@@ -110,6 +110,15 @@ import os as _os_spawn
 SPAWN_CLEARANCE = float(_os_spawn.environ.get(
     "LEOROVER_SPAWN_CLEARANCE", getattr(cfg_mod, "SPAWN_CLEARANCE", 0.30)))
 
+# Episode-start settle: hold wheel commands at zero for the first N env-steps of
+# each episode so the rover settles wheels-down under gravity BEFORE the controller
+# starts driving. This is the faithful port of the PyBullet pre-episode settle
+# (environment2.py: spawn high, low-gravity 2000-step settle to rest, then drive).
+# Isaac otherwise floors the wheels on step 1 while the rover is still dropping,
+# which makes ~20% of rovers wheelspin at the spawn and never launch (spawn-parks).
+# 0 = off (old behavior). Try ~25 (=5 s sim) to test the fix.
+SETTLE_STEPS = int(_os_spawn.environ.get("LEOROVER_SETTLE_STEPS", "0"))
+
 # Friction range mapped from the config friction-intensity sweep (0.3 -> 2.0).
 _FRIC_LO = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MIN)
 _FRIC_HI = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MAX)
@@ -489,6 +498,16 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._wheel_l = out["wheel_left"]
         self._wheel_r = out["wheel_right"]
 
+        # Episode-start settle: zero the wheel command for the first SETTLE_STEPS of
+        # each episode so the rover settles wheels-down before driving (faithful port
+        # of the PyBullet pre-episode settle; cures the ~20% spawn-park wheelspin).
+        if SETTLE_STEPS > 0:
+            settling = (self._ep_steps < SETTLE_STEPS)
+            if bool(settling.any()):
+                z = torch.zeros_like(self._wheel_l)
+                self._wheel_l = torch.where(settling, z, self._wheel_l)
+                self._wheel_r = torch.where(settling, z, self._wheel_r)
+
     def _apply_action(self):
         # Write the same velocity target every substep (PyBullet holds wheel vel
         # constant across its 10 inner steps).
@@ -740,6 +759,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
     def _update_stagnation(self):
         _, _, fwd_vel, _ = self._kin()
         stuck = fwd_vel.abs() < self._res['stagnation_velocity_threshold']
+        if SETTLE_STEPS > 0:
+            # the intentional episode-start settle is stationary by design — don't
+            # let it accumulate stagnation toward a kill.
+            stuck = stuck & (self._ep_steps >= SETTLE_STEPS)
         sustain_steps = self._res['residual_recovery_sustain_steps']
         self._stagnation = torch.where(stuck, self._stagnation + 1, self._stagnation)
         self._recovery_sustain = torch.where(stuck, torch.zeros_like(self._recovery_sustain),
