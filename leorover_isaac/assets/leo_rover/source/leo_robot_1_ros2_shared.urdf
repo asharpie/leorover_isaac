@@ -70,12 +70,13 @@
       </geometry>
     </visual>
     <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
+      <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
-             outline, which gave PhysX a lumpy non-round contact -> wheels spun
-             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
-        <cylinder length="0.07" radius="0.0625" />
+        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
+             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
+             actually grips and rolls instead of spinning in place (~87% slip with the
+             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <sphere radius="0.0625" />
       </geometry>
     </collision>
   </link>
@@ -93,12 +94,13 @@
       </geometry>
     </visual>
     <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
+      <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
-             outline, which gave PhysX a lumpy non-round contact -> wheels spun
-             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
-        <cylinder length="0.07" radius="0.0625" />
+        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
+             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
+             actually grips and rolls instead of spinning in place (~87% slip with the
+             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <sphere radius="0.0625" />
       </geometry>
     </collision>
   </link>
@@ -116,12 +118,13 @@
       </geometry>
     </visual>
     <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
+      <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
-             outline, which gave PhysX a lumpy non-round contact -> wheels spun
-             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
-        <cylinder length="0.07" radius="0.0625" />
+        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
+             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
+             actually grips and rolls instead of spinning in place (~87% slip with the
+             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <sphere radius="0.0625" />
       </geometry>
     </collision>
   </link>
@@ -139,12 +142,13 @@
       </geometry>
     </visual>
     <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
+      <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
-             outline, which gave PhysX a lumpy non-round contact -> wheels spun
-             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
-        <cylinder length="0.07" radius="0.0625" />
+        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
+             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
+             actually grips and rolls instead of spinning in place (~87% slip with the
+             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <sphere radius="0.0625" />
       </geometry>
     </collision>
   </link>
