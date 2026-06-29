@@ -108,6 +108,36 @@ def main():
     converter = UrdfConverter(cfg)
     print(f"[convert_urdf] USD written to: {converter.usd_path}")
 
+    # --- bake wheel-terrain CONTACT OFFSETS into the prototype USD ---
+    # The Mars terrain is a thin TRIANGLE MESH; with PhysX's default contact offset
+    # (~0.02 m) ~18% of rovers punch a wheel THROUGH it on landing and get trapped
+    # below the surface, settling tilted and stuck (proven via the no-drive stall
+    # visualization). The fix is a larger contact offset so contact engages before the
+    # wheel sinks, plus a small rest offset. It MUST be baked here, on the prototype,
+    # because Isaac Lab clones the rover per-env as INSTANCED prims and can't set
+    # collision attrs on the instances at runtime. Tune via LEOROVER_CONTACT_OFFSET /
+    # LEOROVER_REST_OFFSET. Restores PyBullet-heightfield-like contact on the mesh.
+    try:
+        from pxr import Usd, UsdPhysics, PhysxSchema
+        _co = float(os.environ.get("LEOROVER_CONTACT_OFFSET", 0.04))
+        _ro = float(os.environ.get("LEOROVER_REST_OFFSET", 0.005))
+        stage = Usd.Stage.Open(converter.usd_path)
+        _n = 0
+        for prim in stage.Traverse():
+            if prim.HasAPI(UsdPhysics.CollisionAPI):
+                _p = PhysxSchema.PhysxCollisionAPI.Apply(prim)
+                _p.CreateContactOffsetAttr(_co)
+                _p.CreateRestOffsetAttr(_ro)
+                _n += 1
+        stage.GetRootLayer().Save()
+        print(f"[convert_urdf] baked contact_offset={_co} rest_offset={_ro} "
+              f"on {_n} collision prim(s)")
+        if _n == 0:
+            print("[convert_urdf] WARNING: found no collision prims to bake offsets onto "
+                  "(check the USD collision structure).")
+    except Exception as _e:
+        print(f"[convert_urdf] WARNING: could not bake contact offsets: {_e}")
+
     simulation_app.close()
 
 

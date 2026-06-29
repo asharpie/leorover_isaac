@@ -105,10 +105,13 @@ def _build_cfg():
         spawn=sim_utils.UsdFileCfg(
             usd_path=USD_PATH,
             activate_contact_sensors=True,
-            collision_props=sim_utils.CollisionPropertiesCfg(
-                contact_offset=_contact_off,   # engage wheel-terrain contact before it sinks
-                rest_offset=_rest_off,         # tiny resting gap so the wheel sits ON the mesh
-            ),
+            # NOTE: contact_offset/rest_offset (the trimesh-tunneling fix) are BAKED INTO
+            # THE USD by convert_urdf.py, NOT set here. Setting them via collision_props
+            # fails silently: Isaac Lab clones the rover per-env as INSTANCED prims and
+            # cannot modify collision attrs on instances ("Could not perform
+            # modify_collision_properties ... instanced prim"). The convert-time bake sets
+            # them on the prototype so every cloned env inherits them. Tune the baked
+            # values with LEOROVER_CONTACT_OFFSET / LEOROVER_REST_OFFSET at convert time.
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_linear_velocity=10.0,
