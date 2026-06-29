@@ -108,6 +108,14 @@ SPAWN_CLEARANCE = float(getattr(cfg_mod, "SPAWN_CLEARANCE", 0.30))
 # Friction range mapped from the config friction-intensity sweep (0.3 -> 2.0).
 _FRIC_LO = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MIN)
 _FRIC_HI = friction_from_intensity(cfg_mod.TRAINING_FRICTION_MAX)
+# LEOROVER_FRICTION: force a FIXED wheel-material friction coefficient (overrides the sweep)
+# to stress-test the traction hypothesis -- stalled rovers show ~90% wheel slip, so if a high
+# grip value (e.g. 3.0) makes the wedging vanish, traction is the cause. Unset = normal sweep.
+import os as _os_fric
+_FRIC_OVR = _os_fric.environ.get("LEOROVER_FRICTION")
+if _FRIC_OVR:
+    _FRIC_LO = _FRIC_HI = float(_FRIC_OVR)
+    print(f"[friction] forced wheel friction = {_FRIC_LO} (LEOROVER_FRICTION override)", flush=True)
 
 
 # ============================================================================ #
