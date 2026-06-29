@@ -72,18 +72,10 @@
     <collision>
       <origin rpy="1.5708 0 0" xyz="0 0 0" />
       <geometry>
-        <cylinder length="0.07" radius="0.057" />
-      </geometry>
-    </collision>
-    <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
-      <geometry>
-        <cylinder length="0.04" radius="0.0625" />
-      </geometry>
-    </collision>
-    <collision>
-      <geometry>
-        <mesh filename="Wheel_outline.stl" />
+        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
+             outline, which gave PhysX a lumpy non-round contact -> wheels spun
+             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
+        <cylinder length="0.07" radius="0.0625" />
       </geometry>
     </collision>
   </link>
@@ -103,18 +95,10 @@
     <collision>
       <origin rpy="1.5708 0 0" xyz="0 0 0" />
       <geometry>
-        <cylinder length="0.07" radius="0.057" />
-      </geometry>
-    </collision>
-    <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
-      <geometry>
-        <cylinder length="0.04" radius="0.0625" />
-      </geometry>
-    </collision>
-    <collision>
-      <geometry>
-        <mesh filename="Wheel_outline.stl" />
+        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
+             outline, which gave PhysX a lumpy non-round contact -> wheels spun
+             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
+        <cylinder length="0.07" radius="0.0625" />
       </geometry>
     </collision>
   </link>
@@ -134,18 +118,10 @@
     <collision>
       <origin rpy="1.5708 0 0" xyz="0 0 0" />
       <geometry>
-        <cylinder length="0.07" radius="0.057" />
-      </geometry>
-    </collision>
-    <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
-      <geometry>
-        <cylinder length="0.04" radius="0.0625" />
-      </geometry>
-    </collision>
-    <collision>
-      <geometry>
-        <mesh filename="Wheel_outline.stl" />
+        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
+             outline, which gave PhysX a lumpy non-round contact -> wheels spun
+             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
+        <cylinder length="0.07" radius="0.0625" />
       </geometry>
     </collision>
   </link>
@@ -165,18 +141,10 @@
     <collision>
       <origin rpy="1.5708 0 0" xyz="0 0 0" />
       <geometry>
-        <cylinder length="0.07" radius="0.057" />
-      </geometry>
-    </collision>
-    <collision>
-      <origin rpy="1.5708 0 0" xyz="0 0 0" />
-      <geometry>
-        <cylinder length="0.04" radius="0.0625" />
-      </geometry>
-    </collision>
-    <collision>
-      <geometry>
-        <mesh filename="Wheel_outline.stl" />
+        <!-- single clean rolling cylinder: was 2 cylinders + a convex-hulled mesh
+             outline, which gave PhysX a lumpy non-round contact -> wheels spun
+             without gripping (~87% slip). One cylinder at the true 0.0625 m radius. -->
+        <cylinder length="0.07" radius="0.0625" />
       </geometry>
     </collision>
   </link>
