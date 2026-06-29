@@ -121,6 +121,7 @@ def main():
         from pxr import Usd, UsdPhysics, PhysxSchema
         _co = float(os.environ.get("LEOROVER_CONTACT_OFFSET", 0.04))
         _ro = float(os.environ.get("LEOROVER_REST_OFFSET", 0.005))
+        _dv = float(os.environ.get("LEOROVER_DEPEN_VEL", 5.0))
         stage = Usd.Stage.Open(converter.usd_path)
         _n = 0
         for prim in stage.Traverse():
@@ -129,9 +130,18 @@ def main():
                 _p.CreateContactOffsetAttr(_co)
                 _p.CreateRestOffsetAttr(_ro)
                 _n += 1
+        # also bake max_depenetration_velocity onto the rigid bodies, so a wheel that
+        # DOES sink can climb back out fast (the runtime rigid_props value also fails to
+        # apply on the instanced env clones; default 1.0 m/s is too slow to free a trap).
+        _m = 0
+        for prim in stage.Traverse():
+            if prim.HasAPI(UsdPhysics.RigidBodyAPI):
+                _rb = PhysxSchema.PhysxRigidBodyAPI.Apply(prim)
+                _rb.CreateMaxDepenetrationVelocityAttr(_dv)
+                _m += 1
         stage.GetRootLayer().Save()
-        print(f"[convert_urdf] baked contact_offset={_co} rest_offset={_ro} "
-              f"on {_n} collision prim(s)")
+        print(f"[convert_urdf] baked contact_offset={_co} rest_offset={_ro} on "
+              f"{_n} collision prim(s); max_depen_vel={_dv} on {_m} rigid body(ies)")
         if _n == 0:
             print("[convert_urdf] WARNING: found no collision prims to bake offsets onto "
                   "(check the USD collision structure).")
