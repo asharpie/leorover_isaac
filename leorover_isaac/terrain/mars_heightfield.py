@@ -300,6 +300,25 @@ def make_mars_terrain_cfg(
         print(f"[mars_heightfield] custom Mars-hills sub-terrain unavailable ({exc}); "
               f"using built-in types only.")
 
+    # ── DIAGNOSTIC / FAITHFULNESS: restrict the bank to the Mars Gaussian hills ──
+    # The full bank mixes in rough/slope/dune/obstacle/stair patches whose feature
+    # heights (rough up to 0.14 m, obstacles up to 0.5 m, stairs up to 0.16 m, dunes
+    # up to 0.6 m) do NOT shrink at low difficulty, so even "row 0" is NOT flat and
+    # beaches the 0.0625 m-wheel rover -- and PyBullet only ever used the smooth
+    # Gaussian-hill terrain, so the mixed bank is BOTH harder than the baseline and
+    # not apples-to-apples. LEOROVER_HILLS_ONLY=1 keeps only the parity terrain:
+    # row 0 is then a genuinely FLAT mesh (isolates "is the trimesh collider itself
+    # the bug" -> compare to the 91% plane) and higher rows are the faithful hills.
+    import os as _os_h
+    if _os_h.environ.get("LEOROVER_HILLS_ONLY", "0") not in ("0", "", "false", "False"):
+        if "mars_hills" in sub_terrains:
+            sub_terrains = {"mars_hills": sub_terrains["mars_hills"]}
+            print("[mars_heightfield] LEOROVER_HILLS_ONLY=1 -> bank restricted to Mars "
+                  "Gaussian hills (PyBullet-faithful; row 0 is flat)", flush=True)
+        else:
+            print("[mars_heightfield] LEOROVER_HILLS_ONLY=1 requested but the mars_hills "
+                  "sub-terrain is unavailable; keeping the full bank", flush=True)
+
     if not sub_terrains:
         raise RuntimeError("No terrain sub-types could be constructed.")
 
