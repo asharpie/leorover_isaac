@@ -126,6 +126,12 @@ def main():
         _n = 0
         for prim in stage.Traverse():
             if prim.HasAPI(UsdPhysics.CollisionAPI):
+                # WHEELS ONLY. Putting a wide contact band on the chassis makes the
+                # body high-center (beach) on micro-bumps (WEDGED-BEACHED jumped 1->9
+                # when the 0.1 m band was on all prims). The wheels are what tunnel;
+                # the chassis keeps PhysX defaults.
+                if "wheel" not in prim.GetPath().pathString.lower():
+                    continue
                 _p = PhysxSchema.PhysxCollisionAPI.Apply(prim)
                 _p.CreateContactOffsetAttr(_co)
                 _p.CreateRestOffsetAttr(_ro)

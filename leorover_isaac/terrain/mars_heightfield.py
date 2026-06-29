@@ -164,6 +164,37 @@ def make_mars_terrain_cfg(
     reused on later runs. Generation is numpy-vectorized, so even big banks build
     in seconds-to-minutes the first time.
     """
+    # ── DIAGNOSTIC: true collision PLANE (geometry-vs-friction bisect) ──────
+    # LEOROVER_FLAT_PLANE=1 swaps the whole terrain bank for a single flat ground
+    # PLANE — a PhysX half-space that CANNOT be penetrated, dug into, or tunneled
+    # through. This isolates "the trimesh terrain causes the stalls" from "it's a
+    # friction / kinematics / controller problem a plane would share too":
+    #   parking craters on the plane -> the mesh-under-drive is the culprit
+    #   parking persists on the plane -> geometry is exonerated; look at traction/LQR
+    # Flat only (no hills), so it is a diagnostic, never a shipping terrain.
+    import os as _os_plane
+    if _os_plane.environ.get("LEOROVER_FLAT_PLANE", "0") not in ("0", "", "false", "False"):
+        try:
+            from isaaclab.terrains import TerrainImporterCfg
+            import isaaclab.sim as sim_utils
+        except Exception:
+            from omni.isaac.lab.terrains import TerrainImporterCfg
+            import omni.isaac.lab.sim as sim_utils
+        print("[mars_heightfield] LEOROVER_FLAT_PLANE=1 -> flat collision PLANE "
+              "(no hills; geometry-vs-friction bisect)", flush=True)
+        return TerrainImporterCfg(
+            prim_path="/World/ground",
+            terrain_type="plane",
+            collision_group=-1,
+            physics_material=sim_utils.RigidBodyMaterialCfg(
+                friction_combine_mode="multiply",
+                restitution_combine_mode="multiply",
+                static_friction=static_friction,
+                dynamic_friction=dynamic_friction,
+            ),
+            debug_vis=False,
+        )
+
     # Resolve bank size + caching from config.py (overridable via EXPERIMENT_OVERRIDES).
     import config as _cfg
     if num_difficulty_rows is None:
