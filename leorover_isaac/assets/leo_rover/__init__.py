@@ -82,16 +82,38 @@ def _build_cfg():
     _wheel_eff = float(_os.environ.get("LEOROVER_WHEEL_EFFORT", 1000.0))
     _wheel_damp = float(_os.environ.get("LEOROVER_WHEEL_DAMPING", 1000.0))
 
+    # --- Wheel-vs-terrain CONTACT robustness (the trimesh-penetration fix) ---
+    # The Mars terrain is a heightfield baked into a thin TRIANGLE MESH. With PhysX's
+    # default contact offset (~0.02 m) ~18% of rovers punch a wheel THROUGH the thin
+    # mesh surface on landing and get trapped below it, settling tilted and stuck. The
+    # no-drive stall visualization confirmed this: a clean-landing rover rests level
+    # with every wheel at z=0.0625, a stuck one has wheels ~0.05 m BELOW the surface
+    # with ZERO drive command. PyBullet drove on a native HEIGHTFIELD collider, which
+    # doesn't tunnel; this restores equivalent behavior on the Isaac mesh:
+    #   * contact_offset: engage the wheel-terrain contact ~0.04 m out, BEFORE the wheel
+    #     can sink into the surface (must exceed the penetration that was occurring).
+    #   * rest_offset: keep a tiny resting gap so the wheel sits ON the surface, not in it.
+    #   * max_depenetration_velocity: let any wheel that does sink climb back out fast
+    #     (was 1.0 m/s, too slow to recover a 0.05 m trap).
+    # All tunable from the shell; defaults chosen to stop the tunnel while keeping hills.
+    _contact_off = float(_os.environ.get("LEOROVER_CONTACT_OFFSET", 0.04))
+    _rest_off = float(_os.environ.get("LEOROVER_REST_OFFSET", 0.005))
+    _depen_vel = float(_os.environ.get("LEOROVER_DEPEN_VEL", 5.0))
+
     return ArticulationCfg(
         prim_path="{ENV_REGEX_NS}/Robot",
         spawn=sim_utils.UsdFileCfg(
             usd_path=USD_PATH,
             activate_contact_sensors=True,
+            collision_props=sim_utils.CollisionPropertiesCfg(
+                contact_offset=_contact_off,   # engage wheel-terrain contact before it sinks
+                rest_offset=_rest_off,         # tiny resting gap so the wheel sits ON the mesh
+            ),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_linear_velocity=10.0,
                 max_angular_velocity=50.0,
-                max_depenetration_velocity=1.0,
+                max_depenetration_velocity=_depen_vel,   # let a sunk wheel climb back out
                 enable_gyroscopic_forces=True,
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
