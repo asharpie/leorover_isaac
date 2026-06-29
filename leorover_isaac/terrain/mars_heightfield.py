@@ -208,6 +208,9 @@ def make_mars_terrain_cfg(
     # (this is why an AMP sweep looked like it did nothing). Use NOCACHE while sweeping
     # AMP; once a value is chosen, bake it into config.py AND clear the cache dir once.
     import os as _os_nc
+    # config.TERRAIN_AMP is the default hill amplitude; generate_heightfield reads the env
+    # var, so publish the config value into it here (an explicit env var still wins).
+    _os_nc.environ.setdefault("LEOROVER_TERRAIN_AMP", str(float(getattr(_cfg, "TERRAIN_AMP", 5.0))))
     if _os_nc.environ.get("LEOROVER_TERRAIN_NOCACHE", "0") not in ("0", "", "false", "False"):
         use_cache = False
         print("[mars_heightfield] LEOROVER_TERRAIN_NOCACHE=1 -> terrain cache OFF (regenerating)", flush=True)
@@ -322,7 +325,8 @@ def make_mars_terrain_cfg(
     # row 0 is then a genuinely FLAT mesh (isolates "is the trimesh collider itself
     # the bug" -> compare to the 91% plane) and higher rows are the faithful hills.
     import os as _os_h
-    if _os_h.environ.get("LEOROVER_HILLS_ONLY", "0") not in ("0", "", "false", "False"):
+    _hills_default = "1" if bool(getattr(_cfg, "TERRAIN_HILLS_ONLY", False)) else "0"
+    if _os_h.environ.get("LEOROVER_HILLS_ONLY", _hills_default) not in ("0", "", "false", "False"):
         if "mars_hills" in sub_terrains:
             sub_terrains = {"mars_hills": sub_terrains["mars_hills"]}
             print("[mars_heightfield] LEOROVER_HILLS_ONLY=1 -> bank restricted to Mars "

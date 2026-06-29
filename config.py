@@ -134,6 +134,33 @@ TERRAIN_NUM_VARIATIONS = 10        # 20*10 = 200 patches (~5.8M tris). PhysX CAN
                                    # sweep at runtime with LEOROVER_TERRAIN_ROWS/COLS.
 TERRAIN_USE_CACHE = True           # generate the bank once, cache to disk, reuse
 
+# --- Faithful Mars terrain (validated 2026-06-29, the stall investigation) ---
+# A controlled plane-vs-mesh bisect proved the entire success gap vs PyBullet was the
+# TERRAIN, decomposed into three independent causes, each fixed by one knob below. On a
+# clean collider the hybrid hits 91% (beating PyBullet ~70%); the rover/LQR/residual/
+# reward were never the problem. All three are overridable by the matching LEOROVER_*
+# env var (HILLS_ONLY / TERRAIN_AMP / TERRAIN_CONTACT_OFFSET / TERRAIN_REST_OFFSET).
+#
+# 1) TERRAIN_HILLS_ONLY: restrict the bank to the Mars Gaussian hills (what PyBullet
+#    actually used). The mixed obstacle/stair/dune/rough patches added for "variety" have
+#    14-60 cm features even at the lowest difficulty and beached the 6.25 cm-wheel rover at
+#    the spawn -> they were the entire ~18% spawn-PARKING (hills-only -> parked 0%).
+TERRAIN_HILLS_ONLY = True
+# 2) TERRAIN_AMP: metres of hill relief per 100% intensity. PyBullet's original was 5.0,
+#    but at the rover's tiny scale (0.0625 m wheels, ~0.042 m/s crawl) that makes 30%
+#    terrain ~24 deg slopes it cannot climb, so the curriculum stalls. 1.5 is a calibrated,
+#    learnable difficulty (terrain 30: 16% -> 48% even before retraining). Set back to 5.0
+#    for a strict PyBullet-amplitude comparison. NOTE: AMP is read inside the generator and
+#    is NOT part of the terrain cache key -> after changing it, clear the cache or it serves
+#    the old mesh (the HILLS_ONLY switch already changes the key, so the next run regens).
+TERRAIN_AMP = 1.5
+# 3) TERRAIN_CONTACT_OFFSET / REST_OFFSET: a PhysX contact "shell" on the terrain trimesh
+#    so a DRIVEN wheel engages just above the surface instead of catching a triangle edge /
+#    tunnelling through the thin sheet (the residual flat-mesh artifact: rest 0.04 took the
+#    flat mesh 74% -> 80%, toward the 91% analytic plane). 0 disables.
+TERRAIN_CONTACT_OFFSET = 0.06
+TERRAIN_REST_OFFSET = 0.04
+
 # --- Coupled Episode Rotation ---
 # Each (path, terrain_heightfield, friction) configuration is repeated for
 # this many episodes before rotating to a new one. This gives SAC's replay

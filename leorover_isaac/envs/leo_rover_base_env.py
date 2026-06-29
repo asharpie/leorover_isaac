@@ -455,8 +455,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
         Set the contact offset to 0 to disable (revert to the raw trimesh).
         """
         import os as _os_t
-        _tco = float(_os_t.environ.get("LEOROVER_TERRAIN_CONTACT_OFFSET", 0.06))
-        _tro = float(_os_t.environ.get("LEOROVER_TERRAIN_REST_OFFSET", 0.0))
+        _tco = float(_os_t.environ.get("LEOROVER_TERRAIN_CONTACT_OFFSET",
+                                       getattr(cfg_mod, "TERRAIN_CONTACT_OFFSET", 0.06)))
+        _tro = float(_os_t.environ.get("LEOROVER_TERRAIN_REST_OFFSET",
+                                       getattr(cfg_mod, "TERRAIN_REST_OFFSET", 0.0)))
         if _tco <= 0.0:
             return
         try:
