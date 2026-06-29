@@ -72,10 +72,14 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
-             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
-             actually grips and rolls instead of spinning in place (~87% slip with the
-             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <!-- SPHERE wheel collider (r = wheel radius 0.0625 m). The stall visualization
+             showed the rigid rover settling TILTED 5-10 deg on FLAT, coplanar terrain,
+             rolling sideways on one spawn and pitching nose-up on the next = RANDOM
+             contact instability, not a fixed asymmetry. A faceted-cylinder collider
+             polygon-rolls (clunks facet to facet) and gives jittery convex-vs-trimesh
+             contact, so ~18% of rovers rock onto a subset of wheels and stick. A sphere
+             contacts at ONE clean point and rolls perfectly smoothly -> level, stable
+             rest. visualize_stall.py confirms whether this removes the tilt. -->
         <sphere radius="0.0625" />
       </geometry>
     </collision>
@@ -96,10 +100,14 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
-             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
-             actually grips and rolls instead of spinning in place (~87% slip with the
-             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <!-- SPHERE wheel collider (r = wheel radius 0.0625 m). The stall visualization
+             showed the rigid rover settling TILTED 5-10 deg on FLAT, coplanar terrain,
+             rolling sideways on one spawn and pitching nose-up on the next = RANDOM
+             contact instability, not a fixed asymmetry. A faceted-cylinder collider
+             polygon-rolls (clunks facet to facet) and gives jittery convex-vs-trimesh
+             contact, so ~18% of rovers rock onto a subset of wheels and stick. A sphere
+             contacts at ONE clean point and rolls perfectly smoothly -> level, stable
+             rest. visualize_stall.py confirms whether this removes the tilt. -->
         <sphere radius="0.0625" />
       </geometry>
     </collision>
@@ -120,10 +128,14 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
-             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
-             actually grips and rolls instead of spinning in place (~87% slip with the
-             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <!-- SPHERE wheel collider (r = wheel radius 0.0625 m). The stall visualization
+             showed the rigid rover settling TILTED 5-10 deg on FLAT, coplanar terrain,
+             rolling sideways on one spawn and pitching nose-up on the next = RANDOM
+             contact instability, not a fixed asymmetry. A faceted-cylinder collider
+             polygon-rolls (clunks facet to facet) and gives jittery convex-vs-trimesh
+             contact, so ~18% of rovers rock onto a subset of wheels and stick. A sphere
+             contacts at ONE clean point and rolls perfectly smoothly -> level, stable
+             rest. visualize_stall.py confirms whether this removes the tilt. -->
         <sphere radius="0.0625" />
       </geometry>
     </collision>
@@ -144,10 +156,14 @@
     <collision>
       <origin rpy="0 0 0" xyz="0 0 0" />
       <geometry>
-        <!-- SPHERE wheel collider (radius = wheel radius 0.0625 m). PhysX rolls spheres
-             EXACTLY (no convex-prism approximation like a cylinder gets), so the wheel
-             actually grips and rolls instead of spinning in place (~87% slip with the
-             cylinder). Standard PhysX wheel-contact approximation for small robots. -->
+        <!-- SPHERE wheel collider (r = wheel radius 0.0625 m). The stall visualization
+             showed the rigid rover settling TILTED 5-10 deg on FLAT, coplanar terrain,
+             rolling sideways on one spawn and pitching nose-up on the next = RANDOM
+             contact instability, not a fixed asymmetry. A faceted-cylinder collider
+             polygon-rolls (clunks facet to facet) and gives jittery convex-vs-trimesh
+             contact, so ~18% of rovers rock onto a subset of wheels and stick. A sphere
+             contacts at ONE clean point and rolls perfectly smoothly -> level, stable
+             rest. visualize_stall.py confirms whether this removes the tilt. -->
         <sphere radius="0.0625" />
       </geometry>
     </collision>
