@@ -404,6 +404,7 @@ class LeoRoverBaseEnv(DirectRLEnv):
             self.cfg.terrain.num_envs = self.scene.cfg.num_envs
             self.cfg.terrain.env_spacing = self.scene.cfg.env_spacing
             self._terrain = self.cfg.terrain.class_type(self.cfg.terrain)
+            self._fix_terrain_contact()
         # clone & add
         self.scene.clone_environments(copy_from_source=False)
         self.scene.articulations["robot"] = self.robot
@@ -433,6 +434,54 @@ class LeoRoverBaseEnv(DirectRLEnv):
 
         light = sim_utils.DomeLightCfg(intensity=2000.0, color=(0.9, 0.85, 0.8))
         light.func("/World/Light", light)
+
+    # ----------------------------------------------- terrain trimesh fix
+    def _fix_terrain_contact(self):
+        """Widen the TERRAIN collider's PhysX contact/rest offset.
+
+        The Mars terrain is a thin TRIANGLE MESH. The plane-vs-mesh bisect proved
+        it is the entire stall cause: on a non-penetrable ground PLANE parking is
+        0% / tilt 0.0 deg / success 91%, but on the trimesh ~18% of rovers park
+        tilted -- a DRIVEN wheel catches a triangle edge or tunnels through the
+        thin sheet and pins the rover. A larger contact offset makes PhysX engage
+        the wheel-terrain contact a little ABOVE the surface (smoothing over the
+        triangle edges, like a thin collision skirt) and a rest offset lifts the
+        effective collision surface off the thin sheet so the wheel cannot reach
+        the plane it tunnels through. Keeps the hills (still the same mesh shape),
+        just a tunnel-proof contact shell -- the mesh equivalent of why the plane
+        works. Static, shared /World/ground prim (collision_group=-1), so unlike
+        the per-env rover clones it CAN be modified at runtime. Opt-in / tunable:
+          LEOROVER_TERRAIN_CONTACT_OFFSET (default 0.06)  rest: LEOROVER_TERRAIN_REST_OFFSET (0.0)
+        Set the contact offset to 0 to disable (revert to the raw trimesh).
+        """
+        import os as _os_t
+        _tco = float(_os_t.environ.get("LEOROVER_TERRAIN_CONTACT_OFFSET", 0.06))
+        _tro = float(_os_t.environ.get("LEOROVER_TERRAIN_REST_OFFSET", 0.0))
+        if _tco <= 0.0:
+            return
+        try:
+            from pxr import UsdPhysics, PhysxSchema
+            import omni.usd
+            stage = omni.usd.get_context().get_stage()
+            root = self.cfg.terrain.prim_path  # "/World/ground"
+            n = 0
+            for prim in stage.Traverse():
+                if not prim.GetPath().pathString.startswith(root):
+                    continue
+                if prim.HasAPI(UsdPhysics.CollisionAPI):
+                    c = PhysxSchema.PhysxCollisionAPI.Apply(prim)
+                    # contact offset MUST be > rest offset for PhysX.
+                    c.CreateContactOffsetAttr(max(_tco, _tro + 1e-3))
+                    c.CreateRestOffsetAttr(_tro)
+                    n += 1
+            print(f"[terrain] trimesh contact shell: contact_offset={_tco} "
+                  f"rest_offset={_tro} on {n} terrain collision prim(s) under {root}",
+                  flush=True)
+            if n == 0:
+                print("[terrain] WARNING: no terrain collision prims found to widen "
+                      "(check terrain.prim_path); trimesh tunneling NOT fixed.", flush=True)
+        except Exception as _e:
+            print(f"[terrain] WARNING: could not set terrain contact offset: {_e}", flush=True)
 
     # ------------------------------------------------------ path bank (CPU)
     def _build_path_bank(self):
