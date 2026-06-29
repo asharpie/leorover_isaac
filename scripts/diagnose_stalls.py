@@ -101,7 +101,11 @@ def main():
     obs, _ = wrapped.get_observations()
 
     K = min(args.sample, raw.num_envs)
-    keys = ["x", "y", "vel", "cmd_v", "cmd_w", "res_v", "res_w", "cte", "prog"]
+    keys = ["x", "y", "vel", "cmd_v", "cmd_w", "res_v", "res_w", "cte", "prog", "wheel_spd", "tilt"]
+    try:
+        _wids = list(raw._left_ids) + list(raw._right_ids)
+    except Exception:
+        _wids = None
     rec = [{k: [] for k in keys} for _ in range(K)]
     done_flag = torch.zeros(K, dtype=torch.bool)
     refpaths = []
@@ -117,6 +121,16 @@ def main():
             prog = raw._path_progress()
             base = raw._last_baseline           # LQR commanded (v, omega) from the previous apply
             res = raw._last_residual            # scaled residual (v, omega)
+            # wheel spin (spinning-but-stuck vs stalled) and body tilt (high-centered vs flat)
+            try:
+                wsp = raw.robot.data.joint_vel[:, _wids].abs().mean(dim=1) if _wids else torch.zeros(raw.num_envs, device=raw.device)
+            except Exception:
+                wsp = torch.zeros(raw.num_envs, device=raw.device)
+            try:
+                _g = raw.robot.data.projected_gravity_b
+                tilt = torch.rad2deg(torch.atan2(torch.norm(_g[:, :2], dim=-1), _g[:, 2].abs().clamp(min=1e-6)))
+            except Exception:
+                tilt = torch.zeros(raw.num_envs, device=raw.device)
             actions = policy(obs)
             if args.zero_residual:
                 actions = torch.zeros_like(actions)
@@ -131,6 +145,7 @@ def main():
             r["cmd_v"].append(float(base[e, 0])); r["cmd_w"].append(float(base[e, 1]))
             r["res_v"].append(float(res[e, 0])); r["res_w"].append(float(res[e, 1]))
             r["cte"].append(float(cte[e])); r["prog"].append(float(prog[e]))
+            r["wheel_spd"].append(float(wsp[e])); r["tilt"].append(float(tilt[e]))
             if bool(d[e]):
                 done_flag[e] = True
         if bool(done_flag.all()):
@@ -147,21 +162,30 @@ def main():
         cmdv_t = float(np.mean(np.abs(r["cmd_v"][tail])))
         actv_t = float(np.mean(np.abs(r["vel"][tail])))
         cte_t = float(np.mean(np.abs(r["cte"][tail])))
+        wsp_t = float(np.mean(np.abs(r["wheel_spd"][tail]))) if r["wheel_spd"] else 0.0
+        tilt_t = float(np.mean(np.abs(r["tilt"][tail]))) if r["tilt"] else 0.0
         kind = ("success" if final >= 90 else
                 "parked" if final < 5 else
                 "stalled" if final < 50 else "partial")
         mech = ""
         if kind != "success":
             if cte_t > 0.3:
-                mech = "OFF-PATH (high cross-track error)"
+                mech = "OFF-PATH (drove off the path)"
             elif cmdv_t > 0.02 and actv_t < 0.012:
-                mech = "WEDGED (commands motion, barely moving)"
+                # WEDGED: commanding motion, not moving. Sub-classify by wheel spin + tilt:
+                if wsp_t < 0.3:
+                    mech = "WEDGED-BLOCKED (wheels stalled by terrain/torque)"
+                elif tilt_t > 18.0:
+                    mech = "WEDGED-BEACHED (wheels spinning, body tilted/high-centered)"
+                else:
+                    mech = "WEDGED-SLIP (wheels spinning on the ground, no traction)"
             elif cmdv_t <= 0.02:
                 mech = "IDLE (controller commanding ~0)"
             else:
                 mech = "SLOW (creeping below the 0.02 kill line)"
-        out.append(dict(env=e, final=final, kind=kind, mech=mech,
-                        cmd_v_tail=cmdv_t, act_v_tail=actv_t, cte_tail=cte_t, steps=len(r["prog"])))
+        out.append(dict(env=e, final=final, kind=kind, mech=mech, cmd_v_tail=cmdv_t,
+                        act_v_tail=actv_t, cte_tail=cte_t, wheel_spd_tail=wsp_t, tilt_tail=tilt_t,
+                        steps=len(r["prog"])))
 
     import collections
     kinds = collections.Counter(o["kind"] for o in out)
@@ -178,15 +202,20 @@ def main():
     if stuck:
         cv = float(np.mean([o['cmd_v_tail'] for o in stuck]))
         av = float(np.mean([o['act_v_tail'] for o in stuck]))
-        print(f"  stuck rovers, last 100 steps: LQR commanded |v| = {cv:.3f} m/s   vs   actual |v| = {av:.3f} m/s")
-        if cv > 0.02 and av < 0.012:
-            print("     => VERDICT: WEDGED. The controller is asking the rover to move and it can't")
-            print("        (terrain/physics). A bounded (v,omega) residual cannot fix this; see the fix table.")
-        elif cv <= 0.02:
-            print("     => VERDICT: IDLE. The controller itself stops commanding motion. Reward/credit is")
-            print("        the likely cause (give-up incentive); see the fix table.")
-        else:
-            print("     => VERDICT: mixed / OFF-PATH or SLOW; see the per-rover plot.")
+        ws = float(np.mean([o['wheel_spd_tail'] for o in stuck]))
+        ti = float(np.mean([o['tilt_tail'] for o in stuck]))
+        print("  stuck rovers, last 100 steps:")
+        print(f"     LQR commanded |v| = {cv:.3f} m/s    actual |v| = {av:.3f} m/s")
+        print(f"     wheel spin = {ws:.2f} rad/s         body tilt = {ti:.1f} deg")
+        wedged = [o for o in stuck if o['mech'].startswith('WEDGED')]
+        if wedged:
+            print("     WEDGED sub-type breakdown:")
+            for m, c in collections.Counter(o['mech'] for o in wedged).most_common():
+                print(f"        {m:<54} {c}")
+            print("     => the dominant sub-type names the fix:")
+            print("        SLIP    -> raise wheel/terrain friction (wheels spin on ground, no grip)")
+            print("        BEACHED -> raise ground clearance / lower terrain feature height (high-centered)")
+            print("        BLOCKED -> terrain too steep for the torque; cap difficulty or raise effort/speed")
     print("========================================================\n")
 
     outdir = os.path.join(os.path.dirname(args.checkpoint) or ".", "stall_diag")
