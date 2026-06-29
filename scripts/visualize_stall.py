@@ -151,6 +151,14 @@ def main():
     bz = pe[:, base_id, 2]
     wlbl = [names[i].replace("_link", "").replace("wheel_", "") for i in wheel_ids]
 
+    # --- mount-symmetry check: the as-assembled (step 0, rigid) wheel heights ---
+    sp0 = wz[0]
+    print(f"\n[viz] SPAWN pose (step 0, rigid as-assembled from the merged USD):")
+    print(f"   wheel z {[round(float(sp0[j]),4) for j in range(len(wheel_ids))]}  "
+          f"order={wlbl}")
+    print(f"   spread {float(sp0.max()-sp0.min()):.4f} m  "
+          f"(~0 => all 4 wheels mounted at EQUAL height; large => a wheel is mated high/low)")
+
     # --- TEXT readout (works even without opening the PNG) ---
     print(f"\n[viz] env {e} wheel CENTER height above ground (rest = {WHEEL_RADIUS}):")
     for j, lab in enumerate(wlbl):
