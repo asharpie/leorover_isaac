@@ -95,7 +95,14 @@ def generate_heightfield(seed=None, intensity: float = 50.0):
                          (index = y*numRows + x), heights in meters.
     """
     intensity = max(0.0, min(100.0, intensity))
-    height_scale = intensity / 100.0 * 5.0
+    # LEOROVER_TERRAIN_AMP (default 5.0 = original PyBullet amplitude, metres of relief per
+    # 100% intensity). The Leo Rover (~0.0625 m wheels) high-centers and slips on the original
+    # 5 m amplitude: even 20% intensity = 5-25 cm hill features that beach a small rover
+    # (stall diagnosis: ~40% of rovers WEDGED at ~30 deg tilt, identical for LQR and hybrid,
+    # which is the real ~57% performance ceiling). Lower this (try 1.0-2.0) to bring the terrain
+    # within the rover's mobility. Default keeps slope-statistic parity with the PyBullet repo.
+    import os as _os
+    height_scale = intensity / 100.0 * float(_os.environ.get("LEOROVER_TERRAIN_AMP", "5.0"))
 
     # Vectorized Gaussian-hill generation. Same hill statistics as the PyBullet
     # version (20-100 hills; radius 20-100 cells; per-hill height 0.05-0.25 * scale;
