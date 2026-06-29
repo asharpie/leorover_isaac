@@ -202,6 +202,18 @@ def make_mars_terrain_cfg(
     if num_variations is None:
         num_variations = int(getattr(_cfg, "TERRAIN_NUM_VARIATIONS", 20))
     use_cache = bool(getattr(_cfg, "TERRAIN_USE_CACHE", True))
+    # LEOROVER_TERRAIN_NOCACHE=1 forces regeneration. The terrain cache key is the cfg
+    # hash, but LEOROVER_TERRAIN_AMP is read INSIDE the generation function, so it is NOT
+    # in the key -> changing AMP with the cache ON silently reuses the stale (AMP=5) mesh
+    # (this is why an AMP sweep looked like it did nothing). Use NOCACHE while sweeping
+    # AMP; once a value is chosen, bake it into config.py AND clear the cache dir once.
+    import os as _os_nc
+    if _os_nc.environ.get("LEOROVER_TERRAIN_NOCACHE", "0") not in ("0", "", "false", "False"):
+        use_cache = False
+        print("[mars_heightfield] LEOROVER_TERRAIN_NOCACHE=1 -> terrain cache OFF (regenerating)", flush=True)
+    print(f"[mars_heightfield] LEOROVER_TERRAIN_AMP="
+          f"{float(_os_nc.environ.get('LEOROVER_TERRAIN_AMP', '5.0'))} m relief per 100% intensity "
+          f"(cache {'ON' if use_cache else 'OFF'})", flush=True)
 
     # Quick-test overrides (no config edit / push needed): shrink the bank or
     # coarsen the mesh straight from the shell. The full 20x100 = 2000-patch bank
