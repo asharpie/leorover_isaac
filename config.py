@@ -393,7 +393,12 @@ TERRAIN_GATE_FULL = 0.7              # terrain_difficulty above this → gate=1 
 RESIDUAL_RECOVERY_SUSTAIN_STEPS = 10    # Must stay above vel threshold for 10 steps to count
 
 # === STAGNATION DETECTION (stuck recovery) ===
-STAGNATION_VEL_THRESHOLD = 0.02   # Forward velocity below this = "stuck" (m/s)
+STAGNATION_VEL_THRESHOLD = 0.01   # Forward velocity below this = "stuck" (m/s). Lowered
+                                  # 0.02 -> 0.01 (2026-06-30): at the realistic 0.4 m/s the
+                                  # dominant remaining failure is rovers crawling UP a hill at
+                                  # ~0.01-0.02 m/s (still making progress) getting stagnation-
+                                  # killed by the 0.02 line. 0.01 keeps killing the truly-stuck
+                                  # (~0 m/s) while sparing slow-but-climbing rovers.
 STAGNATION_WINDOW = 5             # Grace period (steps) — shorter to detect stagnation faster
 STAGNATION_PENALTY_SCALE = 0.5    # How fast penalty grows per 10 stuck steps
 STAGNATION_MAX_PENALTY = 3.0      # Cap on per-step stagnation penalty
