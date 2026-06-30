@@ -359,6 +359,7 @@ class LeoRoverBaseEnv(DirectRLEnv):
         import os as _os
         _spd = max(1.0, float(_os.environ.get("LEOROVER_SPEED_SCALE",
                                               str(getattr(cfg_mod, "KINEMATIC_SPEED_SCALE", 1.0)))))
+        self._speed_scale = _spd   # used to scale the trajectory-profile corner-crawl floor
         # LEOROVER_RES_SCALE (DEFAULT 0.33 as of 2026-06-24): multiplies the PPO residual
         # authority (max_residual_velocity/omega). Full authority (1.0) lets the noisy
         # residual shove a good LQR trajectory off-path -> a deterministic trace dropped
@@ -515,11 +516,20 @@ class LeoRoverBaseEnv(DirectRLEnv):
         x = [w[0] for w in wpts]
         y = [w[1] for w in wpts]
         yaw = [w[2] for w in wpts]
+        # v_min is the trajectory profile's corner-crawl floor (PyBullet base 0.15). In
+        # PyBullet the kinematic wheel radius (0.3) made a commanded 0.15 produce only
+        # ~0.031 m/s on the ground, slow enough to walk through any hairpin. The realistic
+        # KINEMATIC_SPEED_SCALE sets the kinematic radius to the true 0.0625 so commanded ==
+        # actual, which would force 0.15 m/s through every corner (~5x too fast to make the
+        # sharp ones). Divide by the speed scale to keep the EFFECTIVE corner crawl at the
+        # PyBullet ~0.031 m/s so the LQR can naturally slow for tight turns. (scale 1.0 ==
+        # the original 0.15, exact PyBullet behaviour.)
         vel, omega = compute_trajectory_profile(
             x, y, yaw, v_max=v_max,
             wheel_base=self._controller.wheel_base,
             wheel_radius=self._controller.wheel_radius,
             max_wheel_speed=self._controller.max_wheel_speed,
+            v_min=0.15 / self._speed_scale,
         )
         K = len(x)
         arr = np.zeros((K, 6), dtype=np.float32)
@@ -811,6 +821,16 @@ class LeoRoverBaseEnv(DirectRLEnv):
     def _update_stagnation(self):
         _, _, fwd_vel, _ = self._kin()
         stuck = fwd_vel.abs() < self._res['stagnation_velocity_threshold']
+        # A rover slowing to PIVOT through a sharp corner has near-zero FORWARD speed but is
+        # actively rotating — don't count that as stuck, or it gets killed for turning
+        # correctly (the dominant flat-terrain failure: stall at a hairpin). Exempt rovers
+        # whose yaw rate is clearly above noise; a genuinely-stuck/slipping rover has ~0 yaw
+        # rate (body not rotating) and is still flagged.
+        try:
+            yaw_rate = self.robot.data.root_ang_vel_w[:, 2]
+            stuck = stuck & (yaw_rate.abs() < 0.10)   # rad/s (~6 deg/s); cornering is >0.2
+        except Exception:
+            pass
         if SETTLE_STEPS > 0:
             # the intentional episode-start settle is stationary by design — don't
             # let it accumulate stagnation toward a kill.
