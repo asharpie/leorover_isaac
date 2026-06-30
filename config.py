@@ -232,6 +232,19 @@ PATH_V_MAX = 0.4  # m/s — Leo rover max linear speed ~0.4 m/s
 MAX_VELOCITY_CLIP = 0.4    # m/s — Leo rover max linear speed
 MAX_OMEGA_CLIP = 1.047     # rad/s — Leo rover max angular speed (~60 deg/s)
 
+# Kinematic speed realism (set 2026-06-29 for the physical-rover experiments).
+# The diff-drive controller turns a desired body velocity into wheel angular targets
+# with a KINEMATIC wheel radius. The carried-over value was 0.3 m, but the rover's real
+# wheels are 0.0625 m, so a commanded 0.4 m/s only produced ~0.04-0.08 m/s on the ground
+# (~10x too slow) -- an artifact inherited from the old PyBullet code, NOT a real limit.
+# The real Leo Rover tops out at ~0.4 m/s (Fictionlab spec), and MAX_VELOCITY_CLIP above
+# already targets that. This scale divides the kinematic radius (0.3 / scale) and raises
+# the wheel-speed ceiling together so a commanded 0.4 m/s is ACTUALLY achieved on the
+# ground: scale 4.8 -> kinematic radius 0.0625 = the true physical wheel -> sim speed
+# matches the real rover. The env reads LEOROVER_SPEED_SCALE (this is its default); 1.0
+# reproduces the old 10x-slow crawl. Changing this changes the dynamics -> retrain.
+KINEMATIC_SPEED_SCALE = 4.8
+
 RESIDUAL_SCALE_VELOCITY = MAX_RESIDUAL_VELOCITY
 RESIDUAL_SCALE_OMEGA = MAX_RESIDUAL_OMEGA
 

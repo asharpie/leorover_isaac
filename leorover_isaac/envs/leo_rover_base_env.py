@@ -357,7 +357,8 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # wheel_radius = 0.4 stays fixed), so the SAME commanded velocity (<=0.4 m/s) is
         # actually achieved. scale=4.8 -> full 0.4 m/s. 1.0 reproduces prior runs exactly.
         import os as _os
-        _spd = max(1.0, float(_os.environ.get("LEOROVER_SPEED_SCALE", "1.0")))
+        _spd = max(1.0, float(_os.environ.get("LEOROVER_SPEED_SCALE",
+                                              str(getattr(cfg_mod, "KINEMATIC_SPEED_SCALE", 1.0)))))
         # LEOROVER_RES_SCALE (DEFAULT 0.33 as of 2026-06-24): multiplies the PPO residual
         # authority (max_residual_velocity/omega). Full authority (1.0) lets the noisy
         # residual shove a good LQR trajectory off-path -> a deterministic trace dropped
