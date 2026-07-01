@@ -160,6 +160,13 @@ TERRAIN_AMP = 1.5
 #    flat mesh 74% -> 80%, toward the 91% analytic plane). 0 disables.
 TERRAIN_CONTACT_OFFSET = 0.06
 TERRAIN_REST_OFFSET = 0.04
+# 4) TERRAIN_SMOOTH_SIGMA: Gaussian blur (in 0.1 m cells) applied to each hill patch before
+#    it's meshed, so the 6.25 cm-wheel rover isn't tripped by nearest-resize / grid-cell
+#    facets on the hills (the 24 deg local slopes on "gentle" terrain were largely this
+#    artifact, not the true smooth Gaussian shape). 0 disables; ~1-1.5 softens the facets
+#    while keeping the large hills. No effect on flat (intensity 0 is all-zeros already).
+#    NOT in the terrain cache key -> clear the cache / LEOROVER_TERRAIN_NOCACHE=1 to apply.
+TERRAIN_SMOOTH_SIGMA = 1.0
 
 # --- Coupled Episode Rotation ---
 # Each (path, terrain_heightfield, friction) configuration is repeated for

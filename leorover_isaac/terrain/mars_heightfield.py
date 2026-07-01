@@ -111,6 +111,20 @@ def mars_height_field(difficulty: float, cfg) -> np.ndarray:
     )
     # Resize (nearest) to the exact pixel grid Isaac Lab asked for.
     patch = _resize_nearest(patch, (width_px, length_px))
+    # Smooth the nearest-resize / 0.1 m-cell steps so a 6 cm-wheel rover isn't tripped by
+    # grid facets. Gaussian sigma in cells (0 disables); blurs local sharp features while
+    # keeping the large Gaussian hills. Config default TERRAIN_SMOOTH_SIGMA, env override
+    # LEOROVER_TERRAIN_SMOOTH. NOTE: sigma is NOT in the terrain cache key -> clear the
+    # cache dir / use LEOROVER_TERRAIN_NOCACHE=1 after changing it (same gotcha as AMP).
+    import os as _os_sm
+    try:
+        import config as _cfg_sm
+        _sm_def = float(getattr(_cfg_sm, "TERRAIN_SMOOTH_SIGMA", 1.0))
+    except Exception:
+        _sm_def = 1.0
+    _sm = float(_os_sm.environ.get("LEOROVER_TERRAIN_SMOOTH", _sm_def))
+    if _sm > 0.0 and float(intensity) > 0.0:
+        patch = _smooth_heightfield(patch, _sm)
     # Convert meters -> integer units of vertical_scale (Isaac Lab convention).
     return np.rint(patch / vertical_scale).astype(np.int16)
 
@@ -120,6 +134,24 @@ def _resize_nearest(arr: np.ndarray, shape_wh) -> np.ndarray:
     xi = (np.linspace(0, arr.shape[0] - 1, w)).round().astype(int)
     yi = (np.linspace(0, arr.shape[1] - 1, h)).round().astype(int)
     return arr[np.ix_(xi, yi)]
+
+
+def _smooth_heightfield(arr: np.ndarray, sigma: float) -> np.ndarray:
+    """Separable Gaussian blur (pure numpy, no scipy) that softens local grid facets
+    while preserving the large Gaussian hills. `sigma` in cells. Edge-padded so borders
+    aren't pulled toward zero. Runs at terrain-gen time on a small patch, so speed is fine.
+    """
+    if sigma <= 0.0:
+        return arr
+    r = max(1, int(round(3.0 * sigma)))
+    xs = np.arange(-r, r + 1, dtype=np.float32)
+    k = np.exp(-(xs * xs) / (2.0 * sigma * sigma))
+    k = (k / k.sum()).astype(np.float32)
+    out = arr.astype(np.float32)
+    for axis in (0, 1):
+        out = np.apply_along_axis(
+            lambda m: np.convolve(np.pad(m, r, mode="edge"), k, mode="valid"), axis, out)
+    return out.astype(np.float32)
 
 
 # --------------------------------------------------------------------------- #
