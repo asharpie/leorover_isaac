@@ -26,7 +26,7 @@ ISAAC_PY="$HOME/Desktop/Core_libraries/NVIDIA_GPU/IsaacLab/_isaac_sim/python.sh"
 GPU_TOTAL_MIB=24564                        # RTX 4090
 
 # --- the validated reward fix (2026-06-20: parked -> 59% success). --raw skips it.
-FIX_ENV=(LEOROVER_W_EFFORT=0.05 LEOROVER_W_PROGRESS=150 LEOROVER_W_SMOOTH=0.1)
+FIX_ENV=(LEOROVER_W_EFFORT=${LEOROVER_W_EFFORT:-0.05} LEOROVER_W_PROGRESS=${LEOROVER_W_PROGRESS:-150} LEOROVER_W_SMOOTH=${LEOROVER_W_SMOOTH:-0.1})
 # exploration + rollout, overridable per run with --ent / --rollout.
 #   ent 0.001 (2026-06-21, down from 0.005): lets action-std fall so the policy sharpens
 #     instead of failing ~40% of episodes from exploration noise -> higher success.

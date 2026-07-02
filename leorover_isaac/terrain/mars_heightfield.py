@@ -370,8 +370,16 @@ def make_mars_terrain_cfg(
     if not sub_terrains:
         raise RuntimeError("No terrain sub-types could be constructed.")
 
+    # Fold AMP + smoothing sigma INTO the seed so the terrain disk-cache key (a hash of this
+    # cfg, seed included) invalidates when they change. Otherwise the cache silently serves a
+    # stale mesh after an AMP/smooth tweak -- which bit us hard: trained on smoothed terrain,
+    # evaluated on the old cached mesh -> a bogus 36% eval. Now train and eval agree without
+    # needing LEOROVER_TERRAIN_NOCACHE. (Changing AMP/smooth also reshuffles the hill RNG, fine.)
+    _amp_key = float(_os.environ.get("LEOROVER_TERRAIN_AMP", getattr(_cfg, "TERRAIN_AMP", 5.0)))
+    _sm_key = float(_os.environ.get("LEOROVER_TERRAIN_SMOOTH", getattr(_cfg, "TERRAIN_SMOOTH_SIGMA", 0.0)))
+    _seed = int(getattr(_cfg, "TERRAIN_SEED", 42)) + int(round(_amp_key * 100)) + int(round(_sm_key * 100)) * 1000
     generator = TerrainGeneratorCfg(
-        seed=int(getattr(_cfg, "TERRAIN_SEED", 42)),  # fixed seed -> cache hits across runs
+        seed=_seed,  # base seed + AMP + smooth-sigma (cache invalidates when terrain params change)
         size=(sub_terrain_size, sub_terrain_size),
         border_width=5.0,
         num_rows=num_difficulty_rows,     # difficulty axis (ADR ramp)
