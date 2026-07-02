@@ -233,6 +233,20 @@ class LeoRoverBaseEnv(DirectRLEnv):
 
     # ---------------------------------------------------------------- init
     def __init__(self, cfg, render_mode=None, **kwargs):
+        # Keep PhysX's SMOOTH cylinder-vs-trimesh collision ON (custom geometry) so the
+        # cylinder wheel colliders (restored to match the PyBullet rover) roll cleanly over
+        # the Mars trimesh instead of clunking facet-to-facet. It IS PhysX's default, but
+        # some Isaac Lab RL configs flip collisionApproximate* to true for speed; force it
+        # off here, before super().__init__ cooks the colliders. Best-effort: no-op if carb
+        # is unavailable, and LEOROVER_APPROX_CYL=1 opts back into the fast faceted mode.
+        try:
+            import os as _os_cc, carb as _carb
+            _approx = _os_cc.environ.get("LEOROVER_APPROX_CYL", "0") not in ("0", "", "false", "False")
+            _cs = _carb.settings.get_settings()
+            _cs.set("/physics/collisionApproximateCylinders", _approx)
+            _cs.set("/physics/collisionApproximateCones", _approx)
+        except Exception:
+            pass
         super().__init__(cfg, render_mode, **kwargs)
         dev = self.device
         n = self.num_envs
