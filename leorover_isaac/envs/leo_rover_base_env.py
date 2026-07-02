@@ -813,6 +813,13 @@ class LeoRoverBaseEnv(DirectRLEnv):
         return cte.abs() > self._max_cte_term
 
     def _is_stagnation_timeout(self):
+        # LEOROVER_NO_STAGNATION=1 disables ONLY the stagnation KILL (not the reward). Diagnostic:
+        # lets a slow-cornering rover keep driving instead of being terminated, so we can tell
+        # "corners slowly but would finish" (success recovers) from "genuinely stuck" (episodes
+        # then run to the 2000-step timeout still failing). Used to vet the cylinder wheel.
+        import os as _os_st
+        if _os_st.environ.get("LEOROVER_NO_STAGNATION", "0") not in ("0", "", "false", "False"):
+            return torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         return self._stagnation > self._res['stagnation_termination_steps']
 
     def _is_out_of_time(self):
