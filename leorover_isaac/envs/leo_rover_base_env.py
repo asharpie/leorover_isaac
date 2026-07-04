@@ -259,7 +259,8 @@ class LeoRoverBaseEnv(DirectRLEnv):
                               ("ppo_cte_ok_threshold", "LEOROVER_CTE_OK"),
                               ("ppo_w_effort", "LEOROVER_W_EFFORT"),
                               ("ppo_w_smoothness", "LEOROVER_W_SMOOTH"),
-                              ("ppo_w_heading", "LEOROVER_W_HEADING")):
+                              ("ppo_w_heading", "LEOROVER_W_HEADING"),
+                              ("ppo_w_resid_credit", "LEOROVER_W_RESID_CREDIT")):
             _v = _os.environ.get(_envvar)
             if _v is not None:
                 self._ppo[_key] = float(_v)
@@ -626,6 +627,29 @@ class LeoRoverBaseEnv(DirectRLEnv):
         along = torch.where(degen, torch.zeros_like(along), along)
         return cte, along
 
+    def _predicted_cte_for_cmd(self, pos_xy, yaw, v, omega):
+        """One-step-lookahead CTE if command (v, omega) is held for one env step.
+        Unicycle rollout (midpoint heading) projected onto the current prev->cur
+        segment. Used to CREDIT the residual for its own reduction of tracking error
+        vs the LQR baseline (see the residual-credit term in _get_rewards)."""
+        dt = float(self.cfg.sim.dt) * float(self.cfg.decimation)
+        mid_yaw = yaw + 0.5 * omega * dt
+        nx = pos_xy[:, 0] + v * torch.cos(mid_yaw) * dt
+        ny = pos_xy[:, 1] + v * torch.sin(mid_yaw) * dt
+        nxt = torch.stack([nx, ny], dim=-1)
+        cur = self._gather_wp(self._cur_idx)[:, :2]
+        prev = self._gather_wp((self._cur_idx - 1).clamp(min=0))[:, :2]
+        ab = cur - prev
+        seg_len = torch.norm(ab, dim=-1)
+        ap = nxt - prev
+        denom = (seg_len ** 2).clamp(min=1e-12)
+        t = ((ap * ab).sum(-1) / denom).clamp(0.0, 1.0)
+        closest = prev + t.unsqueeze(-1) * ab
+        cte = torch.norm(nxt - closest, dim=-1)
+        degen = seg_len < 1e-6
+        cte = torch.where(degen, torch.norm(nxt - prev, dim=-1), cte)
+        return cte
+
     def _heading_error(self, yaw):
         target_yaw = self._gather_current_wp()[:, 3]
         return _wrap_to_pi(target_yaw - yaw)
@@ -745,7 +769,25 @@ class LeoRoverBaseEnv(DirectRLEnv):
         else:
             r_eff = torch.zeros(self.num_envs, device=self.device)
 
-        reward = r_cte + r_head + r_vel + r_smooth + r_alive + r_prog + r_eff
+        # --- baseline-relative RESIDUAL CREDIT (anti-collapse) ---------------------
+        # The shared state reward (r_cte/r_head/r_prog) is dominated by the near-optimal
+        # LQR, so the residual sees almost no gradient for its OWN contribution and
+        # collapses to zero under any effort penalty. This term credits the residual for
+        # the marginal reduction in predicted next-step CTE it produces OVER the LQR
+        # baseline: +w when the residual steers toward the path, -w when away. It is a
+        # DIRECTIONAL regularizer (unlike the blanket L2 r_eff), so pair it with
+        # LEOROVER_W_EFFORT=0. Off by default (weight 0); set LEOROVER_W_RESID_CREDIT.
+        w_credit = self._ppo.get('ppo_w_resid_credit', 0.0)
+        if self.cfg.use_lqr_baseline and w_credit > 0.0:
+            cte_base = self._predicted_cte_for_cmd(pos_local[:, :2], yaw,
+                                                   self._last_baseline[:, 0], self._last_baseline[:, 1])
+            cte_tot = self._predicted_cte_for_cmd(pos_local[:, :2], yaw,
+                                                  self._last_total_cmd[:, 0], self._last_total_cmd[:, 1])
+            r_credit = w_credit * (cte_base - cte_tot)
+        else:
+            r_credit = torch.zeros(self.num_envs, device=self.device)
+
+        reward = r_cte + r_head + r_vel + r_smooth + r_alive + r_prog + r_eff + r_credit
 
         goal = self._is_goal_reached()
         fail = (self._is_cte_too_large() | self._is_oob() | self._is_stagnation_timeout()
