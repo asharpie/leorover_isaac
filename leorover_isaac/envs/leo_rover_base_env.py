@@ -172,6 +172,13 @@ if _ISAAC:
             physx=PhysxCfg(
                 gpu_max_rigid_patch_count=int(getattr(cfg_mod, "PHYSX_GPU_PATCH_COUNT", 2 ** 22)),
                 gpu_max_rigid_contact_count=int(getattr(cfg_mod, "PHYSX_GPU_CONTACT_COUNT", 2 ** 23)),
+                # Collision-stack buffer. A FINER terrain (smaller horizontal_scale, so the
+                # 6cm wheel spans several triangles for stable rolling) multiplies the contacts
+                # PER wheel and overflows the ~67M default -> PhysX logs "collisionStackSize
+                # buffer overflow ... increase to at least N" and DROPS contacts (rover falls
+                # through). Sized for the finer bank; raise PHYSX_GPU_COLLISION_STACK if a
+                # denser mesh or more envs overflows it again.
+                gpu_collision_stack_size=int(getattr(cfg_mod, "PHYSX_GPU_COLLISION_STACK", 2 ** 28)),
             ),
         )
         # 2000 policy steps @ 0.2 s — matches the MyEnv2 effective agent-step cap.
