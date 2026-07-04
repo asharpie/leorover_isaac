@@ -233,6 +233,9 @@ def make_mars_terrain_cfg(
         num_difficulty_rows = int(getattr(_cfg, "TERRAIN_NUM_DIFFICULTY_ROWS", 10))
     if num_variations is None:
         num_variations = int(getattr(_cfg, "TERRAIN_NUM_VARIATIONS", 20))
+    # Facet size from config (default 0.025 m; the 2026-07-04 wheel-vs-triangle fix). The
+    # LEOROVER_TERRAIN_HSCALE env var below still overrides this for runtime sweeps.
+    horizontal_scale = float(getattr(_cfg, "TERRAIN_HSCALE", horizontal_scale))
     use_cache = bool(getattr(_cfg, "TERRAIN_USE_CACHE", True))
     # LEOROVER_TERRAIN_NOCACHE=1 forces regeneration. The terrain cache key is the cfg
     # hash, but LEOROVER_TERRAIN_AMP is read INSIDE the generation function, so it is NOT

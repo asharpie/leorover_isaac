@@ -125,13 +125,27 @@ ADR_EVAL_STEPS         = 1500    # sim steps per eval (~one full episode so succ
 #   * First-run generation is numpy-vectorized (seconds-to-minutes) and is then
 #     CACHED to disk (fixed seed), so the big bank is a one-time startup cost.
 #     Reduce VARIATIONS if terrain baking is too slow or OOMs your GPU.
-TERRAIN_NUM_DIFFICULTY_ROWS = 20   # difficulty levels (the ADR ramp axis)
-TERRAIN_NUM_VARIATIONS = 10        # 20*10 = 200 patches (~5.8M tris). PhysX CANNOT cook
-                                   # the old 2000-patch (~57.6M-tri) mesh on Isaac Sim 4.5
-                                   # -> "Unable to create triangle mesh" -> rover falls
-                                   # through. 200 cooks in ~70s (cached after). To go
-                                   # bigger, raise this only as far as cooking succeeds;
-                                   # sweep at runtime with LEOROVER_TERRAIN_ROWS/COLS.
+# TERRAIN FACET SIZE (2026-07-04 fix): the 6.25 cm wheel was SMALLER than the old 0.1 m
+# triangles, so it rode one facet at a time and caught the edges -> tipping/wedging (coarse
+# 0.1 m mesh = 25% pure-LQR). Finer facets let the wheel span several triangles: measured
+# LQR 0.03 m -> 64%, 0.02 m -> 88% (uniform across terrain, tipping gone), vs 97.7% on a
+# perfect plane. 0.025 m is the TRAINING balance (~75-80%) that still fits a bank with ADR
+# rows + column variety under the PhysX cook ceiling. Override with LEOROVER_TERRAIN_HSCALE.
+TERRAIN_HSCALE = 0.025             # terrain facet size (m); < wheel radius 0.0625 = stable roll
+# COOK BUDGET: tris/patch = (sub_terrain_size / TERRAIN_HSCALE)^2 * 2; PhysX cannot cook a
+# combined mesh past ~5.8M tris ("Unable to create triangle mesh" -> rover falls through).
+# At 0.025 m / 12 m patch = 460800 tris/patch, so ROWS*VARIATIONS <= ~12. Paths are ~10 m so
+# the 12 m patch can't shrink; the residual's cornering variety comes from the random
+# per-episode PATHS, not the patch count, so we spend the budget on ADR rows + light variety.
+# NOTE finer facets also multiply CONTACTS -> PHYSX_GPU_COLLISION_STACK below must scale with
+# env count. Sweep at runtime with LEOROVER_TERRAIN_ROWS / COLS / HSCALE.
+TERRAIN_NUM_DIFFICULTY_ROWS = 6    # ADR difficulty levels (0..100% intensity)
+TERRAIN_NUM_VARIATIONS = 2         # column variety per level; 6*2=12 patches @0.025m ~5.5M tris
+# Finer facets multiply per-wheel CONTACTS: the 0.025 m bank overflowed PhysX's default ~67M
+# collision stack at 4096 envs -> "collisionStackSize buffer overflow ... Contacts dropped"
+# -> rover falls through. 2^29 (~536M) covers 4096 envs @ 0.025 m on the 4090. Lower to 2^28
+# for 1024-env evals to save memory; raise if a denser mesh / more envs overflows again.
+PHYSX_GPU_COLLISION_STACK = 2 ** 29
 TERRAIN_USE_CACHE = True           # generate the bank once, cache to disk, reuse
 
 # --- Faithful Mars terrain (validated 2026-06-29, the stall investigation) ---
