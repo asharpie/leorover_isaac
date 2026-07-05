@@ -43,7 +43,8 @@ _HEADER = (
     "terrain_intensity,friction_intensity,"
     "terrain_max_slope_deg,terrain_avg_slope_deg,mean_local_slope_deg,"
     "path_progress,roll_max,pitch_max,"
-    "mean_residual_v_norm,mean_residual_w_norm\n"
+    "mean_residual_v_norm,mean_residual_w_norm,"
+    "max_slip,scenario_id,path_type\n"
 )
 
 
@@ -72,11 +73,13 @@ class EpisodeMetricsRecorder:
             self._steps = torch.zeros(self.n, device=self.device)
             self._resv_sum = z(); self._resw_sum = z()
             self._roll_max = z(); self._pitch_max = z()
-            self._slope_sum = z()
+            self._slope_sum = z(); self._slope_max = z()
+            self._slip_sum = z(); self._slip_max = z()
         else:
             for buf in (self._cte_sum, self._cte_max, self._rew_sum, self._steps,
                         self._resv_sum, self._resw_sum, self._roll_max,
-                        self._pitch_max, self._slope_sum):
+                        self._pitch_max, self._slope_sum, self._slope_max,
+                        self._slip_sum, self._slip_max):
                 buf[idx] = 0.0
 
     @torch.no_grad()
@@ -98,12 +101,33 @@ class EpisodeMetricsRecorder:
             except Exception:
                 from omni.isaac.lab.utils.math import euler_xyz_from_quat
             roll, pitch, _ = euler_xyz_from_quat(env.robot.data.root_quat_w)
+            # Isaac Lab returns Euler angles wrapped to [0, 2*pi): a level rover with roll
+            # -0.02 rad comes back as 6.26, so max(|roll|) saturated at ~2*pi in every CSV
+            # (the 6.28 roll_max/pitch_max columns). Re-wrap to [-pi, pi] before |.|.
+            roll = torch.remainder(roll + math.pi, 2.0 * math.pi) - math.pi
+            pitch = torch.remainder(pitch + math.pi, 2.0 * math.pi) - math.pi
         except Exception:
             roll = torch.zeros_like(cte); pitch = torch.zeros_like(cte)
-        # local slope (deg) from body-frame gravity tilt: slope ~ atan(|g_xy|/|g_z|)
+        # local slope (deg) from body-frame gravity tilt: slope ~ atan(|g_xy|/|g_z|).
+        # On a rigid mesh the chassis rests on the local ground plane, so this IS the
+        # terrain slope under the rover (the paper describes the projected-gravity tilt
+        # as "local terrain tilt under the chassis"). Fills the terrain_*_slope_deg cols.
         grav = env.robot.data.projected_gravity_b
         tilt = torch.atan2(torch.norm(grav[:, :2], dim=-1), grav[:, 2].abs().clamp(min=1e-6))
         slope_deg = torch.rad2deg(tilt)
+
+        # longitudinal wheel slip: the fraction of COMMANDED forward speed not realized on
+        # the ground. Velocity-controlled wheels turn at the commanded v, so (cmd-actual)/cmd
+        # is the slip ratio. Gated to |cmd|>0.05 m/s (undefined near standstill) and clamped
+        # to [0,1] (actual>cmd downhill is not slip). This is the paper's slip metric.
+        try:
+            v_cmd = env._last_total_cmd[:, 0]
+            v_act = env.robot.data.root_lin_vel_b[:, 0]
+            denom = v_cmd.abs().clamp(min=1e-6)
+            slip = ((v_cmd - v_act) / denom).clamp(0.0, 1.0)
+            slip = torch.where(v_cmd.abs() > 0.05, slip, torch.zeros_like(slip))
+        except Exception:
+            slip = torch.zeros_like(cte)
 
         self._cte_sum += cte
         self._cte_max = torch.maximum(self._cte_max, cte)
@@ -114,6 +138,9 @@ class EpisodeMetricsRecorder:
         self._roll_max = torch.maximum(self._roll_max, roll.abs())
         self._pitch_max = torch.maximum(self._pitch_max, pitch.abs())
         self._slope_sum += slope_deg
+        self._slope_max = torch.maximum(self._slope_max, slope_deg)
+        self._slip_sum += slip
+        self._slip_max = torch.maximum(self._slip_max, slip)
 
         done_idx = torch.nonzero(done, as_tuple=False).flatten()
         if len(done_idx) == 0:
@@ -137,22 +164,33 @@ class EpisodeMetricsRecorder:
         idx_l = idx.tolist()
         rows = []
         steps = self._steps.clamp(min=1.0)
+        # scenario id + path-type code, stashed on the env at reset (see base env). Default
+        # -1 / "random" when not in scenario/discrete mode, so training CSVs are unaffected.
+        scen = getattr(env, "_log_scenario_id", None)
+        ptype = getattr(env, "_log_path_type", None)
+        _PT = {0: "random", 1: "zigzag", 2: "curved", 3: "polygon"}
         for e in idx_l:
             self.episode_count += 1
             mean_cte = float(self._cte_sum[e] / steps[e])
             mean_rps = float(self._rew_sum[e] / steps[e])
             mean_slope = float(self._slope_sum[e] / steps[e])
+            max_slope = float(self._slope_max[e])
+            mean_slip = float(self._slip_sum[e] / steps[e])
+            max_slip = float(self._slip_max[e])
             mean_rv = float(self._resv_sum[e] / steps[e])
             mean_rw = float(self._resw_sum[e] / steps[e])
+            sid = int(scen[e]) if scen is not None else -1
+            pt = _PT.get(int(ptype[e]) if ptype is not None else 0, "random")
             rows.append(
                 f"{self.episode_count},{mean_cte:.4f},{float(self._cte_max[e]):.4f},"
-                f"{float(self._rew_sum[e]):.2f},{mean_rps:.4f},0.0000,"
+                f"{float(self._rew_sum[e]):.2f},{mean_rps:.4f},{mean_slip:.4f},"
                 f"{int(steps[e])},{int(success[e])},"
                 f"{float(terr_int[e]):.1f},{float(fric_int[e]):.1f},"
-                f"0.00,0.00,{mean_slope:.2f},"
+                f"{max_slope:.2f},{mean_slope:.2f},{mean_slope:.2f},"
                 f"{float(progress[e]):.1f},"
                 f"{float(self._roll_max[e]):.4f},{float(self._pitch_max[e]):.4f},"
-                f"{mean_rv:.4f},{mean_rw:.4f}\n"
+                f"{mean_rv:.4f},{mean_rw:.4f},"
+                f"{max_slip:.4f},{sid},{pt}\n"
             )
         with open(self.csv_path, "a") as f:
             f.writelines(rows)

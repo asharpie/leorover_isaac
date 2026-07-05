@@ -75,11 +75,14 @@ ${b}EVALUATE${x}
                      reports how many of the rovers reach the goal + saves a top-down plot
   leo trace --lqr    same, but force the PPO residual to 0 = evaluate the bare LQR baseline
   leo diagnose [--terrain P] [--lqr]   classify WHY rovers stall (wedged/idle/off-path/slow) + plot
-  leo eval  <hybrid|lqr|ppo> [--levels 10,20,..] [--envs N] [--steps N]
-                     DETERMINISTIC held-out eval over a terrain sweep -> writes evals/<algo>_<ts>.csv
-                     (the deployable number; strips the exploration noise the training CSV shows)
-  leo compare        side-by-side success/progress-by-terrain of the latest hybrid/lqr/ppo eval CSVs
-  leo evalcsv <algo> print the scp line to pull an eval CSV to your laptop
+  leo eval [--paths discrete|random] [--friction F] [--n N] [--levels ..] [--envs N]
+                     THE eval: all 3 controllers over the IDENTICAL episodes (same path+terrain+
+                     pose+friction) -> paired t-test / McNemar / Cohen's d. Defaults: 9 discrete
+                     geometries, 90k scenarios. --paths random = slope study. Usually just 'leo eval'.
+  leo quickeval <hybrid|lqr|ppo> [--levels 0,20,..] [--envs N] [--steps N]
+                     quick single-controller terrain sweep -> evals/<algo>_<ts>.csv (unpaired, fast)
+  leo compare        side-by-side success/progress-by-terrain of the latest quickeval CSVs
+  leo evalcsv <algo> print the scp line to pull a quickeval CSV to your laptop
   leo tb             launch TensorBoard for the latest run (prints the SSH tunnel command)
 
 ${b}CONTROL${x}
@@ -98,7 +101,7 @@ EOF
 # Deterministic held-out evaluation across a terrain sweep -> evals/<algo>_<ts>.csv
 cmd_eval() {
   local alias="${1:-hybrid}"; [ $# -gt 0 ] && shift
-  local levels="10,20,30,40,50,60,70,80" envs=1024 steps=6000
+  local levels="0,20,40,60,80,100" envs=1024 steps=6000   # row-exact for the 6-row bank (flat row + max row included)
   while [ $# -gt 0 ]; do case "$1" in
     --levels) levels="${2:?}"; shift 2;;
     --envs)   envs="${2:?}"; shift 2;;
@@ -350,6 +353,51 @@ cmd_csv() {
   say "lands at  Downloads\\leo_csvs\\episode_matrix_${ts}.csv  (latest $alias run)"
 }
 
+# Paired, scenario-locked eval: all three controllers over the IDENTICAL episodes,
+# then the paired statistics. This is the paper's matched-condition protocol.
+cmd_pairedeval() {
+  local paths="discrete" friction="1.0" nscen=90000 levels="0,20,40,60,80,100" envs=1024   # row-exact (old 10,30,50,70 collapsed onto rows 0/2/4)
+  while [ $# -gt 0 ]; do case "$1" in
+    --paths) paths="${2:?}"; shift 2;;
+    --friction) friction="${2:?}"; shift 2;;
+    --n|--scenarios) nscen="${2:?}"; shift 2;;
+    --levels) levels="${2:?}"; shift 2;;
+    --envs) envs="${2:?}"; shift 2;;
+    *) err "unknown flag '$1'"; exit 1;;
+  esac; done
+  local hrun hckpt prun pckpt
+  hrun="$(latest_run leo_rover_mars_hybrid)"; [ -z "$hrun" ] && { err "no hybrid run to eval (train one first)"; exit 1; }
+  hckpt="$(latest_ckpt "$hrun")"; { [ -z "$hckpt" ] || [ ! -f "$hckpt" ]; } && { err "no hybrid checkpoint"; exit 1; }
+  prun="$(latest_run leo_rover_mars)"; pckpt=""; [ -n "$prun" ] && pckpt="$(latest_ckpt "$prun")"
+  local ts dir scen; ts="$(date +%Y%m%d_%H%M%S)"; dir="$REPO/evals/paired/$ts"; mkdir -p "$dir"; scen="$dir/scenarios.npz"
+  say "paired eval: paths=${b}$paths${x} friction=$friction scenarios=$nscen levels=$levels envs=$envs"
+  say "hybrid ckpt: $hckpt"
+  [ -n "$pckpt" ] && say "ppo ckpt   : $pckpt" || warn "no pure-PPO run found -> comparing hybrid vs LQR only"
+  local used; used="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')"
+  { [ -n "${used:-}" ] && [ "$used" -gt 3000 ]; } && warn "GPU already has >3 GB in use - stop other jobs first (eval needs the GPU)."
+  warn "starting in 4s - Ctrl-C to abort"; sleep 4
+  # 1) hybrid pass BUILDS + saves the shared scenario file
+  "$LAUNCH" scripts/paired_eval.py --task Isaac-LeoRover-Mars-Hybrid-v0 --checkpoint "$hckpt" \
+     --paths "$paths" --num_scenarios "$nscen" --levels "$levels" --friction "$friction" \
+     --num_envs "$envs" --scenarios "$scen" --out "$dir/hybrid.csv" || { err "hybrid pass failed"; exit 1; }
+  # 2) pure-LQR pass REUSES the scenario file (zero residual, same friction)
+  "$LAUNCH" scripts/paired_eval.py --task Isaac-LeoRover-Mars-Hybrid-v0 --checkpoint "$hckpt" \
+     --zero-residual --paths "$paths" --friction "$friction" --num_envs "$envs" \
+     --scenarios "$scen" --out "$dir/lqr.csv" || { err "lqr pass failed"; exit 1; }
+  local sargs=(hybrid="$dir/hybrid.csv" lqr="$dir/lqr.csv")
+  # 3) pure-PPO pass (if a run exists), same scenarios + friction
+  if [ -n "$pckpt" ]; then
+    "$LAUNCH" scripts/paired_eval.py --task Isaac-LeoRover-Mars-v0 --checkpoint "$pckpt" \
+       --paths "$paths" --friction "$friction" --num_envs "$envs" \
+       --scenarios "$scen" --out "$dir/ppo.csv" && sargs+=(ppo="$dir/ppo.csv") || warn "ppo pass failed - reporting hybrid vs lqr only"
+  fi
+  echo; say "paired statistics:"
+  python3 "$REPO/scripts/paired_stats.py" "${sargs[@]}" | tee "$dir/stats.txt"
+  local made="hybrid.csv, lqr.csv, stats.txt"; [ -n "$pckpt" ] && made="hybrid.csv, lqr.csv, ppo.csv, stats.txt"
+  echo; say "done -> $dir   ($made)"
+  say "pull to laptop:  scp -r ${BOX_HOST}:$dir \$HOME\\Downloads\\leo_csvs\\"
+}
+
 # --- dispatch ----------------------------------------------------------------
 case "${1:-help}" in
   train)              shift; cmd_train "$@";;
@@ -362,8 +410,10 @@ case "${1:-help}" in
   csv|getcsv)         shift; cmd_csv "$@";;
   trace)              shift; cmd_trace "$@";;
   diagnose|stalls)    shift; cmd_diagnose "$@";;
-  eval)               shift; cmd_eval "$@";;
+  eval)               shift; cmd_pairedeval "$@";;
+  quickeval|quick)    shift; cmd_eval "$@";;
   compare|cmp)        cmd_compare;;
+  pairedeval|paired)  shift; cmd_pairedeval "$@";;
   evalcsv)            shift; cmd_evalcsv "$@";;
   tb|tensorboard)     cmd_tb;;
   help|-h|--help|"")   usage;;

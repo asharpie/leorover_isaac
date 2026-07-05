@@ -46,8 +46,12 @@ parser.add_argument("--checkpoint", required=True)
 parser.add_argument("--num_envs", type=int, default=1024)
 parser.add_argument("--steps", type=int, default=6000,
                     help="total sim steps; episodes accumulate across all envs (~num_envs*steps/1000 episodes)")
-parser.add_argument("--levels", default="10,20,30,40,50,60,70,80",
-                    help="comma-separated terrain intensities (%% of max) to sweep; snapped to the nearest terrain rows")
+parser.add_argument("--levels", default="0,20,40,60,80,100",
+                    help="comma-separated terrain intensities (%% of max) to sweep; snapped to the "
+                         "nearest terrain rows. Default is row-exact for the 6-row bank (0..100%%) "
+                         "so the sweep includes the flat row AND the max row. (The old "
+                         "10,20,...,80 default silently snapped 8 values onto rows 0-4 and never "
+                         "evaluated 100%% terrain.)")
 parser.add_argument("--zero-residual", "--lqr", dest="zero_residual", action="store_true",
                     help="force the PPO residual to 0 = evaluate the pure LQR baseline")
 parser.add_argument("--out", default="",
@@ -126,6 +130,10 @@ def main():
     raw._adr = None  # stop the curriculum from moving / printing during eval
     raw._eval_levels = torch.tensor(rows, device=raw.device, dtype=torch.long)
     _mark(f"terrain rows {rows} -> intensities {actual}% (of {_TERRAIN_MAX_PCT:.0f}% max)")
+    if len(rows) < len(set(want)):
+        _mark(f"NOTE: {len(set(want))} requested levels snapped onto only {len(rows)} distinct "
+              f"terrain rows (the bank has {rows_total}); use row-exact percents "
+              f"(multiples of {100.0 / max(denom, 1):.0f}) to avoid collisions")
     # re-place every env onto an eval level before we attach the recorder. If the
     # reset API balks, fall back to natural auto-resets (only the first ~1 episode
     # per env then starts at the construction level instead of an eval level).

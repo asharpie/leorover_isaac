@@ -56,7 +56,7 @@ __all__ = [
 # --------------------------------------------------------------------------- #
 def generate_mars_patch(
     size_m: float = 8.0,
-    resolution_m: float = CELL_SIZE,
+    resolution_m: float = CELL_SIZE,   # kept for API compat; crop is in MASTER cells
     terrain_intensity: float = 50.0,
     seed: int | None = None,
 ) -> np.ndarray:
@@ -64,10 +64,16 @@ def generate_mars_patch(
 
     Faithful to the PyBullet Gaussian-hill terrain. `size_m` controls how large
     a square patch to crop from the 25.6 m master field; the hills, amplitude
-    (height_scale = intensity/100*5) and feature scale match the original.
+    (height_scale = intensity/100*AMP) and feature scale match the original.
+
+    BUGFIX (2026-07-05): the crop used to take `size_m / resolution_m` MASTER
+    cells (master cell = 0.05 m), so at resolution_m=0.025 a "12 m" patch was
+    actually 24 m of terrain relabeled to 12 m -- a 2x horizontal compression
+    that DOUBLED every slope vs the PyBullet original. The crop is now in
+    master cells (size_m / CELL_SIZE); the caller resamples to its pixel grid.
     """
     full = heightfield_to_grid(generate_heightfield(seed=seed, intensity=terrain_intensity))
-    n = max(2, int(round(size_m / resolution_m)))
+    n = max(2, int(round(size_m / CELL_SIZE)))
     n = min(n, full.shape[0])
     # Center crop the requested patch out of the master field.
     r0 = (full.shape[0] - n) // 2
@@ -102,7 +108,16 @@ def mars_height_field(difficulty: float, cfg) -> np.ndarray:
     width_px = max(2, int(size[0] / horizontal_scale))
     length_px = max(2, int(size[1] / horizontal_scale))
 
+    # PER-CELL seed: Isaac Lab hands every grid cell the SAME generator seed
+    # (TerrainGenerator._get_terrain_mesh does cfg.seed = self.cfg.seed), so all
+    # cells used one RNG stream -> identical hill LAYOUT everywhere, with only the
+    # amplitude scaling by difficulty (and the 2 "variation" columns were copies).
+    # Deriving the seed from base_seed + difficulty (unique per cell thanks to the
+    # curriculum jitter) gives every patch its own hills while staying fully
+    # deterministic and cache-consistent (difficulty is part of the cache hash).
     seed = getattr(cfg, "seed", None)
+    if seed is not None:
+        seed = (int(seed) + int(round(float(difficulty) * 1e6))) % (2 ** 31)
     patch = generate_mars_patch(
         size_m=max(size) ,
         resolution_m=horizontal_scale,
@@ -380,7 +395,14 @@ def make_mars_terrain_cfg(
     # needing LEOROVER_TERRAIN_NOCACHE. (Changing AMP/smooth also reshuffles the hill RNG, fine.)
     _amp_key = float(_os.environ.get("LEOROVER_TERRAIN_AMP", getattr(_cfg, "TERRAIN_AMP", 5.0)))
     _sm_key = float(_os.environ.get("LEOROVER_TERRAIN_SMOOTH", getattr(_cfg, "TERRAIN_SMOOTH_SIGMA", 0.0)))
-    _seed = int(getattr(_cfg, "TERRAIN_SEED", 42)) + int(round(_amp_key * 100)) + int(round(_sm_key * 100)) * 1000
+    # _GEN_REV: bump on ANY generation-code change. The Isaac Lab disk cache hashes the
+    # sub-terrain CFG but never the generator FUNCTION BODY (callable_to_string is just
+    # "module:name"), so a code fix silently keeps serving meshes built by the OLD code.
+    # Folding a revision int into the seed invalidates every stale entry. rev 2 =
+    # 2026-07-05 (crop-compression fix + per-cell seeds).
+    _GEN_REV = 2
+    _seed = (int(getattr(_cfg, "TERRAIN_SEED", 42)) + int(round(_amp_key * 100))
+             + int(round(_sm_key * 100)) * 1000 + _GEN_REV * 1_000_000)
     generator = TerrainGeneratorCfg(
         seed=_seed,  # base seed + AMP + smooth-sigma (cache invalidates when terrain params change)
         size=(sub_terrain_size, sub_terrain_size),

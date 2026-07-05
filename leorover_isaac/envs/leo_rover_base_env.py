@@ -311,6 +311,14 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # and by train.py's deterministic ADR eval); None during normal training so the
         # ADR ceiling drives terrain as usual.
         self._eval_levels = None
+        # Scenario-locked eval (paired_eval.py): when set, resets draw a deterministic
+        # (path_idx, terrain row, terrain col) from a fixed ordered list via a global
+        # round-robin counter, so ALL controllers face byte-identical episodes. None during
+        # training. _log_scenario_id / _log_path_type are stashed for the recorder.
+        self._eval_scenarios = None          # dict(path_idx[S], row[S], col[S]) long tensors
+        self._scenario_ptr = 0
+        self._log_scenario_id = torch.full((n,), -1, dtype=torch.long, device=dev)
+        self._log_path_type = torch.zeros(n, dtype=torch.long, device=dev)  # 0=random 1=zigzag 2=curved 3=polygon
         # When the deterministic-eval ADR is active, the noisy per-episode rollout success
         # must NOT move the curriculum (train.py drives it from a noise-free eval instead).
         import os as _os2
@@ -352,6 +360,22 @@ class LeoRoverBaseEnv(DirectRLEnv):
         if ti is not None and getattr(ti, "terrain_origins", None) is not None:
             self._terrain_origins = ti.terrain_origins
             self._t_rows, self._t_cols = self._terrain_origins.shape[0], self._terrain_origins.shape[1]
+            # TERRAIN AUDIT: patch-origin z = mesh height at each patch center. On a graded
+            # hills-only bank row 0 must be +0.000 (flat) with the mean rising by row; if
+            # every row prints the same height the bank has COLLAPSED to copies of one
+            # patch (the failure behind the flat 2026-07-05 difficulty sweep: success/CTE/
+            # tilt identical from 0% to 80% terrain). One glance at startup settles it.
+            try:
+                _oz = self._terrain_origins[..., 2]
+                _row_str = "  ".join(
+                    f"r{r}:{_oz[r].mean().item():+.3f}m({_oz[r].min().item():+.3f}/{_oz[r].max().item():+.3f})"
+                    for r in range(self._t_rows))
+                print(f"[terrain-audit] bank {self._t_rows}x{self._t_cols}; per-difficulty-row "
+                      f"origin height mean(min/max): {_row_str}", flush=True)
+                print("[terrain-audit] expect r0 ~ +0.000 and a rising trend; near-identical "
+                      "rows = collapsed bank (stale cache / shared seed)", flush=True)
+            except Exception:
+                pass
 
         # --- vectorized controller ---
         # LEOROVER_SPEED_SCALE (default 1.0 = unchanged): the kinematic wheel_radius
@@ -504,7 +528,9 @@ class LeoRoverBaseEnv(DirectRLEnv):
         per-env GPU buffers on reset.
         """
         v_max = cfg_mod.PATH_V_MAX
-        self._bank = []   # list of dict(wps[K,6], total_len, cum[K], goal_xy)
+        _PT_CODE = {"random": 0, "zig-zag": 1, "curved": 2, "polygon": 3}
+        self._bank = []        # list of dict(wps[K,6], total_len, cum[K], goal_xy)
+        self._bank_type = []   # per-path type code aligned with _bank (for path_type logging)
         if self.cfg.use_random_paths:
             base_seed = 42
             for i in range(self.cfg.num_random_paths):
@@ -515,9 +541,11 @@ class LeoRoverBaseEnv(DirectRLEnv):
                     seed=base_seed + i,
                 )
                 self._bank.append(self._profile_path(gen.get_waypoints(), v_max))
+                self._bank_type.append(0)
         else:
             for pt in path_templates.ALL_PATHS:
                 self._bank.append(self._profile_path(pt.get_waypoints(), v_max))
+                self._bank_type.append(_PT_CODE.get(pt.path_type, 0))
         self._bank_size = len(self._bank)
 
     def _profile_path(self, wpts, v_max):
@@ -908,9 +936,30 @@ class LeoRoverBaseEnv(DirectRLEnv):
         frac = self._adr.terrain_max / max(self._adr.config.terrain_intensity_max_limit, 1e-6)
         return int(min(self._t_rows - 1, max(0, round(frac * (self._t_rows - 1)))))
 
-    def _report_adr_and_resample(self, env_ids):
+    def _assign_scenarios(self, env_ids):
+        """Scenario-locked eval: hand the resetting envs the next scenario ids from a
+        global round-robin counter and stash them for logging. Returns a [k] long tensor
+        of scenario ids, or None when not in scenario mode. Because ids are handed out by
+        a single counter (independent of WHICH env resets), scenario j always denotes the
+        same (path_idx, row, col) for every controller, so rows join cleanly on
+        scenario_id. Wraps mod S if more than S episodes run (the stats join keeps the
+        first occurrence per id)."""
+        sc = getattr(self, "_eval_scenarios", None)
+        if sc is None:
+            return None
+        k = len(env_ids)
+        S = int(sc["path_idx"].shape[0])
+        ptr = int(getattr(self, "_scenario_ptr", 0))
+        ids = (torch.arange(ptr, ptr + k, device=self.device) % S).long()
+        self._scenario_ptr = ptr + k
+        self._log_scenario_id[env_ids] = ids
+        return ids
+
+    def _report_adr_and_resample(self, env_ids, scen_ids=None):
         """Report finished episodes to ADR, advance the curriculum, and reassign
-        each resetting env to a fresh random terrain patch in [0, ADR ceiling]."""
+        each resetting env to a fresh terrain patch. If scen_ids is given (scenario-
+        locked eval) the (row, col) is deterministic per scenario, else random in
+        [0, ADR ceiling]."""
         # 1. report each finished episode (sequential, like the SB3 ADRCallback).
         # Skipped when _adr_external: the deterministic-eval driver in train.py owns the
         # curriculum, so the noisy stochastic rollout success must not move it.
@@ -926,18 +975,24 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # 2. reassign terrain patches (random row up to ceiling, random column)
         if self._terrain_origins is not None and self._t_rows > 0:
             k = len(env_ids)
-            # EVAL OVERRIDE: if _eval_levels is set (a 1-D tensor of difficulty rows),
-            # each resetting env draws its terrain row uniformly from that fixed set
-            # instead of [0, ADR ceiling]. This pins difficulty to a controlled sweep
-            # (each level gets even coverage) while paths/columns stay random, so
-            # evaluate_policy.py can measure success-vs-terrain across all algorithms.
-            _evl = getattr(self, "_eval_levels", None)
-            if _evl is not None and len(_evl) > 0:
-                levels = _evl[torch.randint(0, len(_evl), (k,), device=self.device)]
+            # SCENARIO-LOCKED (paired eval): deterministic (row, col) per scenario id so
+            # every controller lands on the byte-identical terrain patch. Highest precedence.
+            if scen_ids is not None:
+                levels = self._eval_scenarios["row"][scen_ids].clamp(0, self._t_rows - 1)
+                cols = self._eval_scenarios["col"][scen_ids].clamp(0, max(self._t_cols - 1, 0))
             else:
-                max_level = self._adr_max_level()
-                levels = torch.randint(0, max_level + 1, (k,), device=self.device)
-            cols = torch.randint(0, self._t_cols, (k,), device=self.device)
+                # EVAL OVERRIDE: if _eval_levels is set (a 1-D tensor of difficulty rows),
+                # each resetting env draws its terrain row uniformly from that fixed set
+                # instead of [0, ADR ceiling]. This pins difficulty to a controlled sweep
+                # (each level gets even coverage) while paths/columns stay random, so
+                # evaluate_policy.py can measure success-vs-terrain across all algorithms.
+                _evl = getattr(self, "_eval_levels", None)
+                if _evl is not None and len(_evl) > 0:
+                    levels = _evl[torch.randint(0, len(_evl), (k,), device=self.device)]
+                else:
+                    max_level = self._adr_max_level()
+                    levels = torch.randint(0, max_level + 1, (k,), device=self.device)
+                cols = torch.randint(0, self._t_cols, (k,), device=self.device)
             new_origins = self._terrain_origins[levels, cols]            # [k,3]
             self._terrain.env_origins[env_ids] = new_origins
             # intensity for logging: difficulty fraction * configured ceiling
@@ -949,14 +1004,24 @@ class LeoRoverBaseEnv(DirectRLEnv):
         super()._reset_idx(env_ids)
         dev = self.device
 
+        # scenario-locked eval: hand each resetting env the next scenario id (global
+        # round-robin), which pins its terrain patch AND path deterministically so every
+        # controller faces the identical episode. None during normal training.
+        scen_ids = self._assign_scenarios(env_ids)
+
         # ADR bookkeeping + terrain-patch reassignment for the finishing envs.
-        self._report_adr_and_resample(env_ids)
+        self._report_adr_and_resample(env_ids, scen_ids)
 
         # --- choose a path from the bank for each resetting env ---
         n_reset = len(env_ids)
-        choices = np.random.randint(0, self._bank_size, size=n_reset)
+        if scen_ids is not None:
+            choices = self._eval_scenarios["path_idx"][scen_ids].clamp(0, self._bank_size - 1).cpu().numpy()
+        else:
+            choices = np.random.randint(0, self._bank_size, size=n_reset)
         for k, e in enumerate(env_ids.tolist()):
-            entry = self._bank[choices[k]]
+            ci = int(choices[k])
+            entry = self._bank[ci]
+            self._log_path_type[e] = int(self._bank_type[ci])   # 0=random 1=zigzag 2=curved 3=polygon
             K = min(int(entry["K"]), MAX_WAYPOINTS)   # clamp to buffer size (safety)
             self._wps[e].zero_()
             self._wps[e, :K] = torch.from_numpy(entry["wps"][:K]).to(dev)

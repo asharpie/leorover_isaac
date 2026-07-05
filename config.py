@@ -146,7 +146,12 @@ TERRAIN_NUM_VARIATIONS = 2         # column variety per level; 6*2=12 patches @0
 # -> rover falls through. 2^29 (~536M) covers 4096 envs @ 0.025 m on the 4090. Lower to 2^28
 # for 1024-env evals to save memory; raise if a denser mesh / more envs overflows again.
 PHYSX_GPU_COLLISION_STACK = 2 ** 29
-TERRAIN_USE_CACHE = True           # generate the bank once, cache to disk, reuse
+# 2026-07-05 OFF: the disk cache hashes the sub-terrain CFG but never the generator CODE,
+# and it has repeatedly served stale meshes (the no-op AMP sweep, the bogus 36% eval, and
+# the flat difficulty sweep where every "level" rode statistically identical hills). The
+# 6x2 bank generates in seconds, so caching buys nothing at this size. If you re-enable it,
+# bump _GEN_REV in mars_heightfield.py on every generation-code change.
+TERRAIN_USE_CACHE = False          # regenerate the bank each run (self-consistent, cheap at 6x2)
 
 # --- Faithful Mars terrain (validated 2026-06-29, the stall investigation) ---
 # A controlled plane-vs-mesh bisect proved the entire success gap vs PyBullet was the
@@ -162,12 +167,15 @@ TERRAIN_USE_CACHE = True           # generate the bank once, cache to disk, reus
 TERRAIN_HILLS_ONLY = True
 # 2) TERRAIN_AMP: metres of hill relief per 100% intensity. PyBullet's original was 5.0,
 #    but at the rover's tiny scale (0.0625 m wheels, ~0.042 m/s crawl) that makes 30%
-#    terrain ~24 deg slopes it cannot climb, so the curriculum stalls. 1.5 is a calibrated,
-#    learnable difficulty (terrain 30: 16% -> 48% even before retraining). Set back to 5.0
-#    for a strict PyBullet-amplitude comparison. NOTE: AMP is read inside the generator and
-#    is NOT part of the terrain cache key -> after changing it, clear the cache or it serves
-#    the old mesh (the HILLS_ONLY switch already changes the key, so the next run regens).
-TERRAIN_AMP = 1.5
+#    terrain ~24 deg slopes it cannot climb, so the curriculum stalls. History: 1.5 was
+#    calibrated ON TOP OF the (now fixed) 2x crop-compression bug in generate_mars_patch,
+#    i.e. the terrain the rover actually drove had ~2x the slopes AMP=1.5 implies. 3.0 at
+#    true scale reproduces that measured difficulty (2026-07-05 eval: episode-mean tilt
+#    med 6.5 deg / p90 13 deg, where the high-tilt tertile drove LQR to ~54% success --
+#    exactly the dynamic range a difficulty sweep needs). Use LEOROVER_TERRAIN_AMP=1.5
+#    for the softer post-fix terrain, 5.0 for strict PyBullet-amplitude parity. AMP is
+#    folded into the terrain seed, so changing it regenerates the bank automatically.
+TERRAIN_AMP = 3.0
 # 3) TERRAIN_CONTACT_OFFSET / REST_OFFSET: a PhysX contact "shell" on the terrain trimesh
 #    so a DRIVEN wheel engages just above the surface instead of catching a triangle edge /
 #    tunnelling through the thin sheet (the residual flat-mesh artifact: rest 0.04 took the
