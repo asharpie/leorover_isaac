@@ -1009,10 +1009,42 @@ class LeoRoverBaseEnv(DirectRLEnv):
             denom = max(self._t_rows - 1, 1)
             self._terrain_intensity[env_ids] = (levels.float() / denom) * cfg_mod.ADR_TERRAIN_MAX_LIMIT
 
+    # ------------------------------------------------- friction logging
+    def _log_actual_wheel_friction(self, env_ids):
+        """Read back the wheel friction the wheel_friction EventTerm actually drew this
+        reset and store it (as 0-100% intensity) for the recorder. _friction_intensity
+        used to hold its init value (the sweep midpoint = the mysterious constant 70 in
+        every CSV) forever; the physics randomized while the log stood still. Fail-safe:
+        any API mismatch leaves the old label rather than crashing training."""
+        try:
+            rv = self.robot.root_physx_view
+            if not hasattr(self, "_wheel_shape_idx"):
+                counts = []   # shapes per link, in link order (same pattern Isaac Lab's
+                for link_path in rv.link_paths[0]:   # material randomizer uses)
+                    lv = self.robot._physics_sim_view.create_rigid_body_view(link_path)
+                    counts.append(int(lv.max_shapes))
+                starts = np.cumsum([0] + counts)
+                wheel_ids, _ = self.robot.find_bodies(".*wheel.*")
+                idx = []
+                for b in wheel_ids:
+                    idx.extend(range(int(starts[b]), int(starts[b + 1])))
+                self._wheel_shape_idx = torch.tensor(idx, dtype=torch.long)
+                print(f"[friction-log] tracking {len(idx)} wheel collision shapes "
+                      f"across bodies {wheel_ids}", flush=True)
+            mats = rv.get_material_properties()                       # [N, S, 3] (cpu)
+            ids_cpu = env_ids.cpu() if torch.is_tensor(env_ids) else torch.as_tensor(env_ids)
+            mu = mats[ids_cpu][:, self._wheel_shape_idx, 0].mean(dim=1)   # static friction
+            inten = ((mu - 0.3) / 1.7 * 100.0).clamp(0.0, 100.0)     # invert friction_from_intensity
+            self._friction_intensity[env_ids] = inten.to(self.device)
+        except Exception:
+            pass
+
     # ----------------------------------------------------------- reset
     def _reset_idx(self, env_ids):
         super()._reset_idx(env_ids)
         dev = self.device
+        # events (incl. wheel_friction) ran inside super(); log what they drew.
+        self._log_actual_wheel_friction(env_ids)
 
         # scenario-locked eval: hand each resetting env the next scenario id (global
         # round-robin), which pins its terrain patch AND path deterministically so every

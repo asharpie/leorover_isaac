@@ -625,8 +625,13 @@ TRAINING_TERRAIN_MIN = 10.0  # v27: lowered from 30. Without terrain gate, PPO a
                               #   contrast between what works on flat vs slopes.
                               # Previous: 30.0 (v26), 0.0 (v25)
 TRAINING_TERRAIN_MAX = 50.0  # Initial max (ADR may override this for SAC training)
-TRAINING_FRICTION_MIN = 50.0  # Was 30.0 — narrowed to reduce variance
-TRAINING_FRICTION_MAX = 90.0  # Was 100.0 — narrowed to reduce variance
+# 2026-07-05: restored the full paper sweep (was 50/90, an old SAC-era "reduce variance"
+# narrowing). 50-90% = mu 1.15-1.83 — all grippy, so friction was a non-factor in training.
+# 10-100% = mu 0.47-2.0: the low end is where LQR (slip-blind) degrades and the residual
+# can earn its keep. Wheel materials are redrawn per episode by the wheel_friction
+# EventTerm (each wheel independently); the CSV column logs the actual drawn value now.
+TRAINING_FRICTION_MIN = 10.0
+TRAINING_FRICTION_MAX = 100.0
 
 TRAINING_USE_RANDOM_PATHS = True
 TRAINING_MIN_CURVATURE_ANGLE = 25.0
@@ -1387,7 +1392,14 @@ if _overrides_json:
 # Applied AFTER the GUI override loader above, so any explicit per-run
 # override (if added to the GUI in the future) still wins.
 if agent_mode == "Hybrid":
-    ADR_TERRAIN_MAX_START = 30.0    # was 10.0; LQR can handle 30% from step 1
+    # 2026-07-05: 30 -> 100 = NO curriculum for the hybrid (uniform sampling over ALL
+    # difficulty rows from step 1). Rationale from the 528k-episode 20260705 run: with the
+    # ramp, the ceiling crawled 30->40% in the whole run, so the residual only ever saw
+    # rows the bare LQR already solves at 95.7-99% (nothing to learn -> it collapsed under
+    # the effort penalty), while the actual gap lives at rows 60-100 (LQR 61.5-88.5%).
+    # The LQR floor makes uniform exposure safe for the hybrid from step 1 (this is NOT
+    # true for pure PPO, whose block below keeps the ramp). Also matches the eval sweep.
+    ADR_TERRAIN_MAX_START = 100.0
     # v33.6 (2026-05-15): SUCCESS_THRESHOLD 0.85 → 0.75. At 0.85, ADR stalled
     # at terrain 63% in the 20260513_091206 run because the bar might be
     # physically unreachable at higher terrain (slopes >30° at 100% intensity
