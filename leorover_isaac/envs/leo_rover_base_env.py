@@ -286,6 +286,12 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._cum_len = torch.zeros(n, MAX_WAYPOINTS, device=dev)      # cumulative arc length
         self._total_len = torch.ones(n, device=dev)
         self._goal_xy = torch.zeros(n, 2, device=dev)
+        # per-env path extent (max |x|, max |y| over waypoints) -- the OOB box must follow
+        # the PATH, not the goal: polygon loops end at the origin, so a goal-centered box
+        # (+/-5 m of (0,0)) would kill a rover correctly lapping the 6x4 m rectangle or the
+        # r=5 pentagon (reaches y=10). Extent-based bounds also stop spurious OOB kills on
+        # random paths whose farthest point lies well beyond the goal.
+        self._path_ext = torch.zeros(n, 2, device=dev)
 
         # --- runtime state ---
         self._actions = torch.zeros(n, 2, device=dev)
@@ -334,9 +340,24 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._ep_success = torch.zeros(n, dtype=torch.bool, device=dev)
         self._adr = None
         if self.cfg.use_adr and _HAS_ADR:
+            # HYBRID = NO curriculum: uniform sampling over ALL difficulty rows from step 1.
+            # The config gate `if agent_mode == "Hybrid":` (which was supposed to set this)
+            # NEVER fires in the Isaac stack -- agent_mode is "PPO" at config import -- so
+            # the 20260705_222124 run silently ramped from 10%: 60% of its 2M episodes were
+            # below 40% intensity and the policy froze (std 0.03) before mastering rows
+            # 60-100 (paired eval: -0.9 / -3.7 pts vs LQR there). Decide from the env's own
+            # flag instead: the LQR floor makes uniform exposure safe for the hybrid; pure
+            # PPO keeps the ramp. LEOROVER_ADR_START overrides either.
+            import os as _os_adr
+            _adr_start = float(_os_adr.environ.get(
+                "LEOROVER_ADR_START",
+                100.0 if self.cfg.use_lqr_baseline else cfg_mod.ADR_TERRAIN_MAX_START))
+            if self.cfg.use_lqr_baseline:
+                print(f"[adr] hybrid task -> terrain ceiling starts at {_adr_start:.0f}% "
+                      f"(uniform over all rows; LEOROVER_ADR_START overrides)", flush=True)
             adr_cfg = ADRConfig(
                 terrain_intensity_min=cfg_mod.TRAINING_TERRAIN_MIN,
-                terrain_intensity_max_start=cfg_mod.ADR_TERRAIN_MAX_START,
+                terrain_intensity_max_start=_adr_start,
                 terrain_intensity_max_limit=cfg_mod.ADR_TERRAIN_MAX_LIMIT,
                 friction_intensity_min=cfg_mod.TRAINING_FRICTION_MIN,
                 friction_intensity_max_start=cfg_mod.TRAINING_FRICTION_MAX,
@@ -578,7 +599,9 @@ class LeoRoverBaseEnv(DirectRLEnv):
         cum = np.concatenate([[0.0], np.cumsum(seg)]).astype(np.float32)
         total = float(cum[-1]) if cum[-1] > 1e-6 else 1.0
         return {"wps": arr, "cum": cum, "total": total,
-                "goal": np.array([x[-1], y[-1]], dtype=np.float32), "K": K}
+                "goal": np.array([x[-1], y[-1]], dtype=np.float32), "K": K,
+                "ext": np.array([np.abs(arr[:K, 0]).max(), np.abs(arr[:K, 1]).max()],
+                                dtype=np.float32)}
 
     # ---------------------------------------------------- per-step control
     def _pre_physics_step(self, actions: torch.Tensor):
@@ -867,15 +890,24 @@ class LeoRoverBaseEnv(DirectRLEnv):
     def _is_goal_reached(self):
         pos_local, _, _, _ = self._kin()
         d = torch.norm(pos_local[:, :2] - self._goal_xy, dim=-1)
-        return d < self._goal_tol
+        # PROGRESS GATE (2026-07-06): "at the goal" only counts after actually driving the
+        # path. The polygon templates are closed loops (goal == start), so every controller
+        # -- including an UNTRAINED PPO -- "succeeded" in 1 step at 0% progress, turning all
+        # 30k polygon scenarios in the paired eval into auto-win ties (steps_med=1,
+        # cte=0.000). Requiring >=90% path progress makes closed/near-closed paths a real
+        # test and is a no-op for open paths (you can't stand at their goal without having
+        # covered the path; measured open-path successes complete at ~98-100%).
+        return (d < self._goal_tol) & (self._path_progress() >= 90.0)
 
     def _is_flipped(self):
         return self.robot.data.projected_gravity_b[:, 2] > self._flip_threshold_gz
 
     def _is_oob(self):
         pos_local, _, _, _ = self._kin()
-        gx = self._goal_xy[:, 0].abs() + 5.0
-        gy = self._goal_xy[:, 1].abs() + 5.0
+        # bounds from the PATH extent (see _path_ext comment in __init__); the goal-based
+        # box killed correctly-lapping polygon rovers (loop goal at origin -> +/-5 m box).
+        gx = torch.maximum(self._path_ext[:, 0], self._goal_xy[:, 0].abs()) + 5.0
+        gy = torch.maximum(self._path_ext[:, 1], self._goal_xy[:, 1].abs()) + 5.0
         x, y = pos_local[:, 0], pos_local[:, 1]
         return ~((x.abs() <= gx) & (y.abs() <= gy))
 
@@ -1072,6 +1104,7 @@ class LeoRoverBaseEnv(DirectRLEnv):
             self._num_wp[e] = K
             self._total_len[e] = entry["total"]
             self._goal_xy[e] = torch.from_numpy(entry["goal"]).to(dev)
+            self._path_ext[e] = torch.from_numpy(entry["ext"]).to(dev)
             wp2 = self._wps[e, :K, :2]
             dist0 = torch.norm(wp2, dim=-1)
             found = torch.nonzero(dist0 >= 0.5, as_tuple=False)
