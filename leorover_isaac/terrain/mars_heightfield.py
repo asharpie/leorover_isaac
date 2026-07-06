@@ -84,6 +84,12 @@ def generate_mars_patch(
 # --------------------------------------------------------------------------- #
 # Isaac Lab sub-terrain function
 # --------------------------------------------------------------------------- #
+# Generation-order call counter (see the counter-based row mapping inside
+# mars_height_field). TerrainGenerator builds cells strictly (col-major, rows
+# inner), once per process, with the cache off -> counter % num_rows == grid row.
+_HILL_CELL_COUNTER = 0
+
+
 def mars_height_field(difficulty: float, cfg) -> np.ndarray:
     """Isaac Lab height-field sub-terrain function.
 
@@ -102,6 +108,37 @@ def mars_height_field(difficulty: float, cfg) -> np.ndarray:
     # actually sampled at run time, so this is the per-patch steepness).
     intensity = float(difficulty) * 100.0
 
+    # ── COUNTER-BASED ROW MAPPING (2026-07-05, default ON) ─────────────────────
+    # Two independent evals measured the difficulty axis DEAD FLAT (success/CTE/tilt
+    # identical from 0% to 100% terrain), i.e. the `difficulty` arriving here is not
+    # graded per row on the box, whatever the upstream cause. This bypasses it:
+    # TerrainGenerator calls the terrain function in a deterministic order
+    # (for col: for row: ...), so a call counter maps each call to its grid row
+    # exactly: row = counter % num_rows, intensity = row/(num_rows-1)*100. That makes
+    # generation match the env's logging (level = row/(rows-1)*100) BY CONSTRUCTION:
+    # row 0 exactly flat, row N-1 exactly 100%. Holds for any per-column terrain-type
+    # mix (each column contributes num_rows consecutive calls). REQUIRES the terrain
+    # cache OFF (a cache hit skips the call and desyncs the counter) - which is the
+    # config default since 2026-07-05. Disable with LEOROVER_ROW_FROM_COUNTER=0 to
+    # fall back to Isaac's difficulty argument.
+    import os as _os_rc
+    global _HILL_CELL_COUNTER
+    _diff_in = float(difficulty)
+    _cell_idx = _HILL_CELL_COUNTER
+    _HILL_CELL_COUNTER += 1
+    if _os_rc.environ.get("LEOROVER_ROW_FROM_COUNTER", "1") not in ("0", "", "false", "False"):
+        try:
+            import config as _cfg_rc
+            _n_rows = int(getattr(_cfg_rc, "TERRAIN_NUM_DIFFICULTY_ROWS", 6))
+        except Exception:
+            _n_rows = 6
+        _n_rows = max(2, int(_os_rc.environ.get("LEOROVER_TERRAIN_ROWS", _n_rows)))
+        _row = _cell_idx % _n_rows
+        intensity = _row / float(_n_rows - 1) * 100.0
+        if _cell_idx < 2 * _n_rows:   # print the whole bank once
+            print(f"[mars-hills] cell {_cell_idx}: difficulty_in={_diff_in:.4f} "
+                  f"-> row {_row} intensity {intensity:.1f}%", flush=True)
+
     horizontal_scale = float(getattr(cfg, "horizontal_scale", CELL_SIZE))
     vertical_scale = float(getattr(cfg, "vertical_scale", 0.005))
     size = getattr(cfg, "size", (20.0, 20.0))
@@ -110,14 +147,13 @@ def mars_height_field(difficulty: float, cfg) -> np.ndarray:
 
     # PER-CELL seed: Isaac Lab hands every grid cell the SAME generator seed
     # (TerrainGenerator._get_terrain_mesh does cfg.seed = self.cfg.seed), so all
-    # cells used one RNG stream -> identical hill LAYOUT everywhere, with only the
-    # amplitude scaling by difficulty (and the 2 "variation" columns were copies).
-    # Deriving the seed from base_seed + difficulty (unique per cell thanks to the
-    # curriculum jitter) gives every patch its own hills while staying fully
-    # deterministic and cache-consistent (difficulty is part of the cache hash).
+    # cells used one RNG stream -> identical hill LAYOUT everywhere. The call
+    # counter is the only value guaranteed unique per cell (difficulty proved
+    # constant on the box), so fold it into the seed: every patch gets its own
+    # hills, deterministically.
     seed = getattr(cfg, "seed", None)
     if seed is not None:
-        seed = (int(seed) + int(round(float(difficulty) * 1e6))) % (2 ** 31)
+        seed = (int(seed) + 7919 * _cell_idx + int(round(intensity * 1e4))) % (2 ** 31)
     patch = generate_mars_patch(
         size_m=max(size) ,
         resolution_m=horizontal_scale,
@@ -140,6 +176,22 @@ def mars_height_field(difficulty: float, cfg) -> np.ndarray:
     _sm = float(_os_sm.environ.get("LEOROVER_TERRAIN_SMOOTH", _sm_def))
     if _sm > 0.0 and float(intensity) > 0.0:
         patch = _smooth_heightfield(patch, _sm)
+    # EDGE TAPER (2026-07-05): the master-field crop cuts hills mid-slope, so patch
+    # edges sit up to ~amplitude above the flat border ring Isaac pads around every
+    # patch -> a one-pixel step that slope_threshold turns into a VERTICAL WALL
+    # around every patch. 10 m paths leave the ~11.5 m interior in most episodes, so
+    # rovers wedged on these walls (max_slip=1, roll ~68 deg, death at ~68% progress
+    # at EVERY level) were the dominant, level-independent failure in the 2026-07-05
+    # evals (84% at AMP 3.0; the mysterious flat ~19% floor at the old amplitude).
+    # Ramping hills smoothly to 0 within TAPER_M of the patch edge removes every
+    # wall while leaving the interior difficulty untouched; patch borders are then
+    # continuous with the flat ring and with every neighbor (all edges ~0).
+    # Margin sizing: the cosine ramp's max slope is pi*h_edge/(2*margin). At AMP 1.5
+    # edge heights stay <= ~0.5 m, so 1.5 m keeps ramps under ~28 deg (traversable,
+    # below the 36.9 deg verticalization threshold). Raise the margin if you raise AMP.
+    _taper_m = float(_os_sm.environ.get("LEOROVER_TERRAIN_TAPER", "1.5"))
+    if _taper_m > 0.0 and float(intensity) > 0.0:
+        patch = _edge_taper(patch, _taper_m, horizontal_scale)
     # Convert meters -> integer units of vertical_scale (Isaac Lab convention).
     return np.rint(patch / vertical_scale).astype(np.int16)
 
@@ -149,6 +201,25 @@ def _resize_nearest(arr: np.ndarray, shape_wh) -> np.ndarray:
     xi = (np.linspace(0, arr.shape[0] - 1, w)).round().astype(int)
     yi = (np.linspace(0, arr.shape[1] - 1, h)).round().astype(int)
     return arr[np.ix_(xi, yi)]
+
+
+def _edge_taper(arr: np.ndarray, margin_m: float, hscale: float) -> np.ndarray:
+    """Cosine-ramp the heightfield to 0 within `margin_m` of every patch edge.
+
+    w(d) = 0.5 - 0.5*cos(pi * min(d/margin, 1)) per axis (product of the two axes),
+    where d is the distance to the nearest edge. Interior (> margin from all edges)
+    is untouched; edges land at exactly 0, matching the flat border ring Isaac Lab
+    pads around each sub-terrain and the neighboring patches' (also tapered) edges.
+    """
+    m_px = max(1, int(round(margin_m / max(hscale, 1e-6))))
+    n0, n1 = arr.shape
+
+    def ramp(n):
+        d = np.minimum(np.arange(n), np.arange(n)[::-1]).astype(np.float32)
+        t = np.clip(d / float(m_px), 0.0, 1.0)
+        return 0.5 - 0.5 * np.cos(np.pi * t)
+
+    return (arr.astype(np.float32) * ramp(n0)[:, None] * ramp(n1)[None, :]).astype(np.float32)
 
 
 def _smooth_heightfield(arr: np.ndarray, sigma: float) -> np.ndarray:

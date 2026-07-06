@@ -149,8 +149,10 @@ PHYSX_GPU_COLLISION_STACK = 2 ** 29
 # 2026-07-05 OFF: the disk cache hashes the sub-terrain CFG but never the generator CODE,
 # and it has repeatedly served stale meshes (the no-op AMP sweep, the bogus 36% eval, and
 # the flat difficulty sweep where every "level" rode statistically identical hills). The
-# 6x2 bank generates in seconds, so caching buys nothing at this size. If you re-enable it,
-# bump _GEN_REV in mars_heightfield.py on every generation-code change.
+# 6x2 bank generates in seconds, so caching buys nothing at this size. MUST stay False
+# while the counter-based row mapping in mars_height_field is on (default: a cache hit
+# skips the generation call and desyncs the cell counter). If you ever re-enable it, set
+# LEOROVER_ROW_FROM_COUNTER=0 and bump _GEN_REV on every generation-code change.
 TERRAIN_USE_CACHE = False          # regenerate the bank each run (self-consistent, cheap at 6x2)
 
 # --- Faithful Mars terrain (validated 2026-06-29, the stall investigation) ---
@@ -166,16 +168,15 @@ TERRAIN_USE_CACHE = False          # regenerate the bank each run (self-consiste
 #    the spawn -> they were the entire ~18% spawn-PARKING (hills-only -> parked 0%).
 TERRAIN_HILLS_ONLY = True
 # 2) TERRAIN_AMP: metres of hill relief per 100% intensity. PyBullet's original was 5.0,
-#    but at the rover's tiny scale (0.0625 m wheels, ~0.042 m/s crawl) that makes 30%
-#    terrain ~24 deg slopes it cannot climb, so the curriculum stalls. History: 1.5 was
-#    calibrated ON TOP OF the (now fixed) 2x crop-compression bug in generate_mars_patch,
-#    i.e. the terrain the rover actually drove had ~2x the slopes AMP=1.5 implies. 3.0 at
-#    true scale reproduces that measured difficulty (2026-07-05 eval: episode-mean tilt
-#    med 6.5 deg / p90 13 deg, where the high-tilt tertile drove LQR to ~54% success --
-#    exactly the dynamic range a difficulty sweep needs). Use LEOROVER_TERRAIN_AMP=1.5
-#    for the softer post-fix terrain, 5.0 for strict PyBullet-amplitude parity. AMP is
-#    folded into the terrain seed, so changing it regenerates the bank automatically.
-TERRAIN_AMP = 3.0
+#    but at the rover's tiny scale (0.0625 m wheels) that is unclimbable. History: 1.5 was
+#    tuned on top of the (now fixed) 2x crop-compression bug, and a brief 3.0 "true-scale
+#    equivalent" (2026-07-05) proved to be an overshoot: hill faces beyond the 36.9 deg
+#    slope_threshold got verticalized into WALLS and even the edge taper could not stay
+#    traversable (LQR 16% at every level, wheels at max_slip=1 wedged on cliffs). 1.5 at
+#    TRUE scale gives: rows 0-1 flat/gentle, rows 2-3 ~ the previously measured med-6.5deg
+#    difficulty, rows 4-5 up to ~30 deg hill faces - hard but physical, nearly wall-free.
+#    AMP is folded into the terrain seed, so changing it regenerates the bank.
+TERRAIN_AMP = 1.5
 # 3) TERRAIN_CONTACT_OFFSET / REST_OFFSET: a PhysX contact "shell" on the terrain trimesh
 #    so a DRIVEN wheel engages just above the surface instead of catching a triangle edge /
 #    tunnelling through the thin sheet (the residual flat-mesh artifact: rest 0.04 took the
