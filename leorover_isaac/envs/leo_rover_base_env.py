@@ -847,6 +847,16 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # metrics recorder logs the REAL episode outcome instead of the respawn.
         self._log_progress = self._path_progress()
         self._log_goal = goal
+        # The IDENTITY columns fall into the same auto-reset trap: _reset_idx redraws the
+        # terrain level / scenario / path for the NEXT episode before the recorder flushes,
+        # so reading them live logged every episode under the FOLLOWING episode's labels.
+        # Levels are drawn IID per reset, so label and actual terrain were independent --
+        # this off-by-one is what made every per-level table dead flat across all three
+        # 2026-07-05 evals (while the physical bank was in fact graded). Snapshot pre-reset.
+        self._log_terr_int = self._terrain_intensity.clone()
+        self._log_fric_int = self._friction_intensity.clone()
+        self._log_scen_final = self._log_scenario_id.clone()
+        self._log_ptype_final = self._log_path_type.clone()
 
         terminated = (goal | self._is_flipped() | self._is_oob()
                       | self._is_cte_too_large() | self._is_stagnation_timeout())

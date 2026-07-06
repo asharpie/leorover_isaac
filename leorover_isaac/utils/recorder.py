@@ -129,24 +129,31 @@ class EpisodeMetricsRecorder:
         except Exception:
             slip = torch.zeros_like(cte)
 
-        self._cte_sum += cte
-        self._cte_max = torch.maximum(self._cte_max, cte)
+        # Reward + step count belong to the episode that just ENDED for done envs (the
+        # terminal reward is paid on the done step), so accumulate them BEFORE flushing.
         self._rew_sum += reward
         self._steps += 1.0
-        self._resv_sum += resv
-        self._resw_sum += resw
-        self._roll_max = torch.maximum(self._roll_max, roll.abs())
-        self._pitch_max = torch.maximum(self._pitch_max, pitch.abs())
-        self._slope_sum += slope_deg
-        self._slope_max = torch.maximum(self._slope_max, slope_deg)
-        self._slip_sum += slip
-        self._slip_max = torch.maximum(self._slip_max, slip)
 
         done_idx = torch.nonzero(done, as_tuple=False).flatten()
-        if len(done_idx) == 0:
-            return
-        self._flush(done_idx)
-        self._reset_accum(done_idx)
+        if len(done_idx) > 0:
+            self._flush(done_idx)
+            self._reset_accum(done_idx)
+
+        # State-based metrics on the done step describe the RESPAWNED robot (Isaac
+        # auto-resets inside step, before this hook runs), so exclude just-reset envs:
+        # the finished episode keeps only its real frames and the new episode starts
+        # accumulating from the next call.
+        live = (~done).float()
+        self._cte_sum += cte * live
+        self._cte_max = torch.maximum(self._cte_max, cte * live)
+        self._resv_sum += resv * live
+        self._resw_sum += resw * live
+        self._roll_max = torch.maximum(self._roll_max, roll.abs() * live)
+        self._pitch_max = torch.maximum(self._pitch_max, pitch.abs() * live)
+        self._slope_sum += slope_deg * live
+        self._slope_max = torch.maximum(self._slope_max, slope_deg * live)
+        self._slip_sum += slip * live
+        self._slip_max = torch.maximum(self._slip_max, slip * live)
 
     def _flush(self, idx):
         env = self.env
@@ -158,16 +165,29 @@ class EpisodeMetricsRecorder:
             progress = env._path_progress()
         _goal = getattr(env, "_log_goal", None)
         success = _goal.float() if _goal is not None else env._is_goal_reached().float()
-        terr_int = getattr(env, "_terrain_intensity", torch.zeros(self.n, device=self.device))
-        fric_int = getattr(env, "_friction_intensity", torch.zeros(self.n, device=self.device))
+        # Identity columns MUST come from the pre-reset snapshots (_get_dones): by flush
+        # time _reset_idx has already redrawn terrain level / scenario / path for the NEXT
+        # episode, and logging those decorrelated every per-level table (the flat-sweep
+        # bug). Fall back to live values only if the env predates the snapshots.
+        terr_int = getattr(env, "_log_terr_int", None)
+        if terr_int is None:
+            terr_int = getattr(env, "_terrain_intensity", torch.zeros(self.n, device=self.device))
+        fric_int = getattr(env, "_log_fric_int", None)
+        if fric_int is None:
+            fric_int = getattr(env, "_friction_intensity", torch.zeros(self.n, device=self.device))
 
         idx_l = idx.tolist()
         rows = []
         steps = self._steps.clamp(min=1.0)
-        # scenario id + path-type code, stashed on the env at reset (see base env). Default
-        # -1 / "random" when not in scenario/discrete mode, so training CSVs are unaffected.
-        scen = getattr(env, "_log_scenario_id", None)
-        ptype = getattr(env, "_log_path_type", None)
+        # scenario id + path-type code: pre-reset snapshots for the same reason (the live
+        # buffers already hold the NEXT episode's scenario -> a paired join would be
+        # off-by-one). Default -1 / "random" when not in scenario/discrete mode.
+        scen = getattr(env, "_log_scen_final", None)
+        if scen is None:
+            scen = getattr(env, "_log_scenario_id", None)
+        ptype = getattr(env, "_log_ptype_final", None)
+        if ptype is None:
+            ptype = getattr(env, "_log_path_type", None)
         _PT = {0: "random", 1: "zigzag", 2: "curved", 3: "polygon"}
         for e in idx_l:
             self.episode_count += 1
