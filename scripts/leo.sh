@@ -168,7 +168,9 @@ cmd_train() {
   local alias="${1:-}"; [ $# -gt 0 ] && shift
   local gym exp; gym="$(task_id "$alias")"; exp="$(task_exp "$alias")"
   [ -z "$gym" ] && { err "unknown task '${alias:-}'  (use: hybrid | ppo | flat)"; exit 1; }
-  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout="" speed=1 residual=0.33
+  # residual default respects a pre-set LEOROVER_RES_SCALE (it used to be silently
+  # clobbered to 0.33 -- the 20260706_173712 run trained at 0.33 despite the env var).
+  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout="" speed=1 residual="${LEOROVER_RES_SCALE:-0.33}"
   while [ $# -gt 0 ]; do case "$1" in
     --envs)     envs="${2:?}"; shift 2;;
     --iters)    iters="${2:?}"; shift 2;;
