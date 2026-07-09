@@ -189,6 +189,36 @@ def main():
     env = RslRlVecEnvWrapper(env, clip_actions=getattr(agent_cfg, "clip_actions", None))
     runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=run_dir,
                             device=getattr(agent_cfg, "device", None) or str(env.unwrapped.device))
+
+    # NOISE-STD CLAMP (2026-07-09, default ON). rsl_rl's Gaussian action std is an
+    # UNBOUNDED nn.Parameter and the entropy bonus pays for growing it, so any ent_coef
+    # > 0 can run it away exponentially: run 20260708_192000 hit std ~2e18 after ~10 h
+    # and crashed torch.normal ("std >= 0"); rollouts had been LQR+uniform-noise since
+    # ~25% in (res_w pinned at 0.406 = E|U(-1,1)| signature). Same pathology as the
+    # PyBullet v31 log_std runaway, same fix ported: clamp after EVERY PPO update.
+    # The 0.05 floor also prevents the ent=0.001 freeze (std collapsed to 0.03 in the
+    # 20260705 run). Tune/disable via LEOROVER_STD_MIN / LEOROVER_STD_MAX (max<=0 = off).
+    _std_min = float(os.environ.get("LEOROVER_STD_MIN", "0.05"))
+    _std_max = float(os.environ.get("LEOROVER_STD_MAX", "0.6"))
+    if _std_max > 0.0:
+        import math as _math
+        _pol = runner.alg.policy
+        _orig_update = runner.alg.update
+
+        def _clamped_update(*a, **k):
+            out = _orig_update(*a, **k)
+            with torch.no_grad():
+                _s = getattr(_pol, "std", None)
+                if isinstance(_s, torch.nn.Parameter):
+                    _s.data.clamp_(_std_min, _std_max)
+                elif isinstance(getattr(_pol, "log_std", None), torch.nn.Parameter):
+                    _pol.log_std.data.clamp_(_math.log(_std_min), _math.log(_std_max))
+            return out
+
+        runner.alg.update = _clamped_update
+        print(f"[std-clamp] policy noise std clamped to [{_std_min}, {_std_max}] "
+              f"after every PPO update (runaway + freeze guard)", flush=True)
+
     if args.wandb:
         os.environ.setdefault("WANDB_PROJECT", "leorover_isaac")
 
