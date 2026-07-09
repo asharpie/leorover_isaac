@@ -267,7 +267,8 @@ class LeoRoverBaseEnv(DirectRLEnv):
                               ("ppo_w_effort", "LEOROVER_W_EFFORT"),
                               ("ppo_w_smoothness", "LEOROVER_W_SMOOTH"),
                               ("ppo_w_heading", "LEOROVER_W_HEADING"),
-                              ("ppo_w_resid_credit", "LEOROVER_W_RESID_CREDIT")):
+                              ("ppo_w_resid_credit", "LEOROVER_W_RESID_CREDIT"),
+                              ("ppo_success_bonus", "LEOROVER_SUCCESS_BONUS")):
             _v = _os.environ.get(_envvar)
             if _v is not None:
                 self._ppo[_key] = float(_v)
@@ -806,6 +807,27 @@ class LeoRoverBaseEnv(DirectRLEnv):
 
         w = self._ppo
         r_cte = -w['ppo_w_cte'] * cte ** 2
+        # SLOPE-GATED CTE RELIEF (opt-in: LEOROVER_CTE_SLOPE_RELIEF in [0,1], default off).
+        # On steep ground, relax the cross-track penalty so the residual is licensed to
+        # CHOOSE ITS LINE: the lookahead obs lets the policy SEE a steep knob ahead, but a
+        # full-strength dense CTE penalty makes hugging the path straight into the
+        # marginal-traction line the reward-optimal behavior (the mu=0.5 steep failures:
+        # 75% slip, episode-cap timeouts). Relief ramps from 0 at <=5 deg chassis tilt to
+        # the configured fraction at >=15 deg, so flat-ground tracking is untouched and
+        # the CTE-2.0 kill still bounds any detour.
+        if not hasattr(self, "_cte_relief"):
+            import os as _os_cr
+            self._cte_relief = min(1.0, max(0.0, float(
+                _os_cr.environ.get("LEOROVER_CTE_SLOPE_RELIEF", "0.0"))))
+            if self._cte_relief > 0.0:
+                print(f"[reward] slope-gated CTE relief = {self._cte_relief:.2f} "
+                      f"(0 at <=5 deg tilt -> full at >=15 deg)", flush=True)
+        if self._cte_relief > 0.0:
+            _g = self.robot.data.projected_gravity_b
+            _tilt_deg = torch.rad2deg(torch.atan2(torch.norm(_g[:, :2], dim=-1),
+                                                  _g[:, 2].abs().clamp(min=1e-6)))
+            _relief = self._cte_relief * ((_tilt_deg - 5.0) / 10.0).clamp(0.0, 1.0)
+            r_cte = r_cte * (1.0 - _relief)
         r_head = -w['ppo_w_heading'] * head ** 2
         vel_scale = (1.0 - cte.abs() / w['ppo_cte_ok_threshold']).clamp(min=0.0)
         r_vel = w['ppo_w_velocity'] * vel_scale * fwd_vel.clamp(min=0.0)
