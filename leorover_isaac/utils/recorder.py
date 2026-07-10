@@ -128,6 +128,10 @@ class EpisodeMetricsRecorder:
             slip = torch.where(v_cmd.abs() > 0.05, slip, torch.zeros_like(slip))
         except Exception:
             slip = torch.zeros_like(cte)
+        # PHASE 2: when the soil model is active, prefer TRUE wheel-level slip (rim speed
+        # vs hub speed) over the cmd-vs-actual proxy above, which over-reads transients.
+        if getattr(env, "_soil", None) is not None:
+            slip = env._soil_slip.abs().mean(dim=1)
 
         # Reward + step count belong to the episode that just ENDED for done envs (the
         # terminal reward is paid on the done step), so accumulate them BEFORE flushing.

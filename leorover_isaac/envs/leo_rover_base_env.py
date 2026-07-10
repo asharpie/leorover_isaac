@@ -326,6 +326,25 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._scenario_ptr = 0
         self._log_scenario_id = torch.full((n,), -1, dtype=torch.long, device=dev)
         self._log_path_type = torch.zeros(n, dtype=torch.long, device=dev)  # 0=random 1=zigzag 2=curved 3=polygon
+
+        # --- PHASE 2: terramechanics-lite sand (see leorover_isaac/terrain/soil.py) ---
+        # Opt-in via LEOROVER_SOIL=1 (or config.SOIL_MODEL). Mars-terrain tasks only.
+        # Adds per-wheel soft-soil forces each control step and appends per-wheel
+        # slip(4) + sinkage(4) to the observation (the env cfgs bump observation_space
+        # to match). NOTE: checkpoints trained without soil are NOT obs-compatible.
+        import os as _os_soil
+        _soil_def = "1" if bool(getattr(cfg_mod, "SOIL_MODEL", False)) else "0"
+        self._soil_enabled = (_os_soil.environ.get("LEOROVER_SOIL", _soil_def)
+                              not in ("0", "", "false", "False")) \
+            and bool(getattr(self.cfg, "use_mars_terrain", False))
+        self._soil = None
+        self._soil_failed = False
+        self._soil_slip = torch.zeros(n, 4, device=dev)
+        self._soil_sink = torch.zeros(n, 4, device=dev)
+        if self._soil_enabled:
+            print("[soil] terramechanics-lite ENABLED: per-wheel sinkage drag, slip-thrust "
+                  "decay, lateral shear over a seeded soil-zone map; obs +8 (slip4, sink4)",
+                  flush=True)
         # When the deterministic-eval ADR is active, the noisy per-episode rollout success
         # must NOT move the curriculum (train.py drives it from a noise-free eval instead).
         import os as _os2
@@ -616,6 +635,22 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._last_total_cmd = out["total"]
         self._last_baseline = out["baseline"]
         self._last_residual = out["residual"]
+
+        # PHASE 2 soil: compute the soft-soil wrench from current wheel/base state and
+        # buffer it on the base link (persists through the decimated physics steps).
+        if self._soil_enabled and not self._soil_failed:
+            if self._soil is None:
+                self._init_soil()
+            if self._soil is not None:
+                _wsr = self.robot.data.joint_vel[:, self._soil_jids] * self._soil_wheel_r
+                _vb = self.robot.data.root_lin_vel_b
+                _wb = self.robot.data.root_ang_vel_b
+                _f, _tau, self._soil_slip, self._soil_sink = self._soil.compute(
+                    _vb[:, 0], _vb[:, 1], _wb[:, 2], _wsr,
+                    self.robot.data.root_pos_w[:, :2],
+                    self.cfg.sim.dt * self.cfg.decimation)
+                self.robot.set_external_force_and_torque(
+                    _f.unsqueeze(1), _tau.unsqueeze(1), body_ids=self._soil_base_id)
         # left command -> FL,RL ; right command -> FR,RR
         self._wheel_l = out["wheel_left"]
         self._wheel_r = out["wheel_right"]
@@ -796,6 +831,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
         if self.cfg.use_camera_lookahead:
             self._last_lookahead = self._compute_lookahead()
             obs = torch.cat([obs, self._last_lookahead], dim=-1)
+        # PHASE 2 soil: the policy must SENSE traction to exploit it — append per-wheel
+        # slip (4) + sinkage (4). The LQR baseline stays slip-blind by design.
+        if self._soil_enabled:
+            obs = torch.cat([obs, self._soil_slip, self._soil_sink], dim=-1)
         obs = torch.nan_to_num(obs, nan=0.0, posinf=10.0, neginf=-10.0)
         return {"policy": obs}
 
@@ -1063,6 +1102,46 @@ class LeoRoverBaseEnv(DirectRLEnv):
             denom = max(self._t_rows - 1, 1)
             self._terrain_intensity[env_ids] = (levels.float() / denom) * cfg_mod.ADR_TERRAIN_MAX_LIMIT
 
+    # ------------------------------------------------- soil model (phase 2)
+    def _init_soil(self):
+        """Lazy-build the terramechanics model on first use (robot data ready).
+        Fail-safe: any API mismatch prints and disables soil rather than crashing."""
+        try:
+            import re as _re
+            from leorover_isaac.terrain.soil import TerramechanicsLite
+            jids, jnames = self.robot.find_joints(".*wheel.*")
+            if len(jids) != 4:
+                raise RuntimeError(f"expected 4 wheel joints, found {jnames}")
+            # chassis-frame hub offsets from joint names (front/left conventions)
+            y_off = torch.tensor([+1.0 if _re.search(r"(fl|rl|left)", n.lower()) else -1.0
+                                  for n in jnames], device=self.device)
+            x_off = torch.tensor([+1.0 if _re.search(r"(fl|fr|front)", n.lower()) else -1.0
+                                  for n in jnames], device=self.device)
+            track_half = 0.5 * float(getattr(self._controller, "wheel_base", 0.36))
+            y_off = y_off * track_half
+            x_off = x_off * 0.15
+            try:
+                m_total = float(self.robot.root_physx_view.get_masses()[0].sum())
+            except Exception:
+                m_total = 6.5
+            import config as _cfg_soil
+            seed = int(getattr(_cfg_soil, "TERRAIN_SEED", 42)) + 777
+            self._soil = TerramechanicsLite(
+                self.num_envs, self.device, seed,
+                wheel_x_off=x_off, wheel_y_off=y_off,
+                load_per_wheel_n=m_total * 9.81 / 4.0)
+            self._soil_jids = torch.as_tensor(jids, dtype=torch.long, device=self.device)
+            self._soil_wheel_r = 0.0625
+            bids, _ = self.robot.find_bodies("base_link")
+            self._soil_base_id = list(bids) if len(bids) == 1 else [0]
+            print(f"[soil] model up: wheels={jnames} load/wheel="
+                  f"{m_total * 9.81 / 4.0:.1f} N  zone seed={seed} sand-frac~"
+                  f"{self._soil.sand_frac:.0%}  (coeffs via LEOROVER_SOIL_*)", flush=True)
+        except Exception as e:
+            self._soil_failed = True
+            self._soil = None
+            print(f"[soil] DISABLED (init failed: {e})", flush=True)
+
     # ------------------------------------------------- friction logging
     def _log_actual_wheel_friction(self, env_ids):
         """Read back the wheel friction the wheel_friction EventTerm actually drew this
@@ -1164,6 +1243,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._ep_success[env_ids] = False
         init_yaw = self._gather_wp(self._cur_idx)[env_ids, 3]
         self._controller.reset_idx(env_ids, init_yaw)
+        if self._soil is not None:
+            self._soil.reset_idx(env_ids)
+            self._soil_slip[env_ids] = 0.0
+            self._soil_sink[env_ids] = 0.0
 
     # ----------------------------------------------------- ADR diagnostics
     @property

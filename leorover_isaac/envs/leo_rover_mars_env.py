@@ -46,6 +46,11 @@ if _ISAAC:
             # If camera lookahead disabled in config, drop the 6 extra dims.
             if not self.use_camera_lookahead:
                 self.observation_space = 9
+            # PHASE 2 soil model appends per-wheel slip(4) + sinkage(4) to the obs.
+            import os as _os_soil
+            _soil_def = "1" if bool(getattr(cfg_mod, "SOIL_MODEL", False)) else "0"
+            if _os_soil.environ.get("LEOROVER_SOIL", _soil_def) not in ("0", "", "false", "False"):
+                self.observation_space += 8
 
 
 class LeoRoverMarsEnv(LeoRoverBaseEnv):

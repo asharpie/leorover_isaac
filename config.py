@@ -183,6 +183,14 @@ TERRAIN_AMP = 1.5
 #    flat mesh 74% -> 80%, toward the 91% analytic plane). 0 disables.
 TERRAIN_CONTACT_OFFSET = 0.06
 TERRAIN_REST_OFFSET = 0.04
+# 5) SOIL_MODEL (PHASE 2): terramechanics-lite sand on top of the rigid mesh — per-wheel
+#    sinkage drag, slip-thrust decay (spinning digs, doesn't pull), lateral shear, all
+#    scaled by a seeded soil-zone map (firm ground vs sand pockets within one traverse).
+#    Adds per-wheel slip+sinkage (8 dims) to the policy obs; the LQR stays slip-blind by
+#    design, so this is where the hybrid's structural headroom lives. Checkpoints trained
+#    without soil are NOT obs-compatible with soil runs (and vice versa). Override with
+#    LEOROVER_SOIL=0/1; coefficients via LEOROVER_SOIL_* (see leorover_isaac/terrain/soil.py).
+SOIL_MODEL = False                 # default off: phase-1 rigid world stays reproducible
 # 4) TERRAIN_SMOOTH_SIGMA: Gaussian blur (in 0.1 m cells) applied to each hill patch before
 #    it's meshed, so the 6.25 cm-wheel rover isn't tripped by nearest-resize / grid-cell
 #    facets on the hills (the 24 deg local slopes on "gentle" terrain were largely this
