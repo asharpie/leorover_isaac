@@ -53,6 +53,16 @@ if _ISAAC:
             _soil_def = "1" if bool(getattr(cfg_mod, "SOIL_MODEL", False)) else "0"
             if _os_soil.environ.get("LEOROVER_SOIL", _soil_def) not in ("0", "", "false", "False"):
                 self.observation_space += 8
+            # LEOROVER_EPISODE_S: episode-cap override (seconds). Sand drag makes 400 s too
+            # short for the long discrete geometries — completion became a speed metric
+            # (paired 2026-07-12: polygons 3-5%, zigzags 9-11% for BOTH controllers, cap
+            # timeouts dominant). A longer cap separates "slow but tracking" from "stuck";
+            # the stagnation kill still removes truly bogged rovers, so this only spares
+            # the slow-but-alive. Applies to every controller leg equally (env inherit).
+            _ep_s = _os_soil.environ.get("LEOROVER_EPISODE_S")
+            if _ep_s:
+                self.episode_length_s = float(_ep_s)
+                print(f"[episode] cap override: episode_length_s = {self.episode_length_s:.0f} s", flush=True)
 
 
 class LeoRoverMarsHybridEnv(LeoRoverBaseEnv):

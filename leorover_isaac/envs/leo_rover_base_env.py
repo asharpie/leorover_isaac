@@ -884,7 +884,27 @@ class LeoRoverBaseEnv(DirectRLEnv):
             mw = max(cfg_mod.MAX_RESIDUAL_OMEGA, 1e-6)
             rvn = self._last_residual[:, 0] / mv
             rwn = self._last_residual[:, 1] / mw
-            r_eff = -w['ppo_w_effort'] * (rvn ** 2 + rwn ** 2)
+            # SLIP-GATED V-EFFORT EXEMPTION (phase 2, opt-in: LEOROVER_EFFORT_SLIP_EXEMPT in
+            # [0,1], default off). On sand the effort penalty killed the VELOCITY channel
+            # (res_v -> 0.03 while res_w stayed alive at ~0.11), yet slip is the failure
+            # axis and speed modulation is THE dig-in escape tool. Make v-corrections
+            # progressively free as measured wheel slip rises: no relief below 0.35 slip
+            # (ordinary sand rolling sits near 0.40 commanded-speed deficit, true wheel
+            # slip ~0.35 baseline), full configured relief at >= 0.70 (dig-in regime).
+            # The w-channel keeps its full penalty — it is alive and earning already.
+            if not hasattr(self, "_eff_slip_exempt"):
+                import os as _os_se
+                self._eff_slip_exempt = min(1.0, max(0.0, float(
+                    _os_se.environ.get("LEOROVER_EFFORT_SLIP_EXEMPT", "0.0"))))
+                if self._eff_slip_exempt > 0.0:
+                    print(f"[reward] slip-gated v-effort exemption = {self._eff_slip_exempt:.2f} "
+                          f"(free v-corrections as slip ramps 0.35 -> 0.70)", flush=True)
+            v_pen = rvn ** 2
+            if self._eff_slip_exempt > 0.0 and self._soil_enabled:
+                _slipm = self._soil_slip.abs().mean(dim=1)
+                _relief = self._eff_slip_exempt * ((_slipm - 0.35) / 0.35).clamp(0.0, 1.0)
+                v_pen = v_pen * (1.0 - _relief)
+            r_eff = -w['ppo_w_effort'] * (v_pen + rwn ** 2)
         else:
             r_eff = torch.zeros(self.num_envs, device=self.device)
 

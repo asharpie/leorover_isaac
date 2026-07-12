@@ -51,6 +51,11 @@ if _ISAAC:
             _soil_def = "1" if bool(getattr(cfg_mod, "SOIL_MODEL", False)) else "0"
             if _os_soil.environ.get("LEOROVER_SOIL", _soil_def) not in ("0", "", "false", "False"):
                 self.observation_space += 8
+            # LEOROVER_EPISODE_S: episode-cap override (seconds); see hybrid env for why.
+            _ep_s = _os_soil.environ.get("LEOROVER_EPISODE_S")
+            if _ep_s:
+                self.episode_length_s = float(_ep_s)
+                print(f"[episode] cap override: episode_length_s = {self.episode_length_s:.0f} s", flush=True)
 
 
 class LeoRoverMarsEnv(LeoRoverBaseEnv):
