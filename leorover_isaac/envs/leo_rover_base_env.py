@@ -1184,9 +1184,13 @@ class LeoRoverBaseEnv(DirectRLEnv):
                 starts = np.cumsum([0] + counts)
                 wheel_ids, _ = self.robot.find_bodies(".*wheel.*")
                 idx = []
+                groups = []   # shape indices grouped per wheel (for scenario-locked mu writes)
                 for b in wheel_ids:
-                    idx.extend(range(int(starts[b]), int(starts[b + 1])))
+                    g = list(range(int(starts[b]), int(starts[b + 1])))
+                    idx.extend(g)
+                    groups.append(g)
                 self._wheel_shape_idx = torch.tensor(idx, dtype=torch.long)
+                self._wheel_shape_groups = groups
                 print(f"[friction-log] tracking {len(idx)} wheel collision shapes "
                       f"across bodies {wheel_ids}", flush=True)
             mats = rv.get_material_properties()                       # [N, S, 3] (cpu)
@@ -1208,6 +1212,40 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # round-robin), which pins its terrain patch AND path deterministically so every
         # controller faces the identical episode. None during normal training.
         scen_ids = self._assign_scenarios(env_ids)
+
+        # SCENARIO-LOCKED FRICTION (2026-07-13): when the scenario table carries a
+        # per-scenario per-wheel mu[S,4] (paired_eval --scen-friction), OVERWRITE the
+        # random draw the wheel_friction event just made, so episode j gets the
+        # byte-identical traction for every controller. This is what lets the paired
+        # protocol cover friction diversity instead of one fixed value. Fail-safe:
+        # any API mismatch prints once and falls back to the event's random draw.
+        if (scen_ids is not None
+                and isinstance(getattr(self, "_eval_scenarios", None), dict)
+                and "mu" in self._eval_scenarios
+                and hasattr(self, "_wheel_shape_groups")):
+            try:
+                rv = self.robot.root_physx_view
+                mats = rv.get_material_properties()                     # [N, S, 3] (cpu)
+                ids_cpu = env_ids.cpu() if torch.is_tensor(env_ids) else torch.as_tensor(env_ids)
+                mu_k = self._eval_scenarios["mu"][scen_ids].cpu()       # [k, 4]
+                for w, shapes in enumerate(self._wheel_shape_groups[:4]):
+                    for si in shapes:
+                        mats[ids_cpu, si, 0] = mu_k[:, w]               # static
+                        mats[ids_cpu, si, 1] = mu_k[:, w]               # dynamic
+                rv.set_material_properties(mats, ids_cpu)
+                # log the true applied value (mean over wheels, as 0-100% intensity)
+                inten = ((mu_k.mean(dim=1) - 0.3) / 1.7 * 100.0).clamp(0.0, 100.0)
+                self._friction_intensity[env_ids] = inten.to(dev)
+                if not getattr(self, "_scen_mu_announced", False):
+                    self._scen_mu_announced = True
+                    print(f"[paired] scenario-locked per-wheel friction ACTIVE  mu range "
+                          f"{float(self._eval_scenarios['mu'].min()):.2f}-"
+                          f"{float(self._eval_scenarios['mu'].max()):.2f}", flush=True)
+            except Exception as e:
+                if not getattr(self, "_scen_mu_failed", False):
+                    self._scen_mu_failed = True
+                    print(f"[paired] scenario friction FAILED ({e}) - falling back to the "
+                          f"event's random draw (legs may not be friction-paired!)", flush=True)
 
         # ADR bookkeeping + terrain-patch reassignment for the finishing envs.
         self._report_adr_and_resample(env_ids, scen_ids)
@@ -1288,3 +1326,4 @@ class LeoRoverBaseEnv(DirectRLEnv):
         if self._adr is None:
             return "hold"
         return self._adr.force_eval(float(success_rate), float(mean_cte))
+# eof

@@ -53,8 +53,20 @@ parser.add_argument("--levels", default="0,20,40,60,80,100",
                          "10,30,50,70 default snapped onto rows {0,2,4} -- three real levels "
                          "masquerading as four.)")
 parser.add_argument("--friction", type=float, default=1.0,
-                    help="FIXED wheel friction for the whole run; use the SAME value for all "
-                         "three controllers (baked via LEOROVER_FRICTION at env import)")
+                    help="baseline wheel friction (baked via LEOROVER_FRICTION at env import); "
+                         "with --scen-friction on this is only the pre-reset default, since "
+                         "every episode's friction comes from the shared scenario table")
+parser.add_argument("--scen-friction", choices=["on", "off"], default="on",
+                    help="on (default): each scenario carries its own per-wheel friction "
+                         "(base mu ~ U[mu-min, mu-max] x per-wheel jitter), stored in the "
+                         "shared scenario file and applied at reset -> friction-DIVERSE yet "
+                         "perfectly paired. off: one fixed --friction for the whole run "
+                         "(the pre-2026-07-13 behavior)")
+parser.add_argument("--mu-min", type=float, default=0.47, help="scenario friction: base mu lower bound")
+parser.add_argument("--mu-max", type=float, default=2.0, help="scenario friction: base mu upper bound")
+parser.add_argument("--mu-jitter", type=float, default=0.15,
+                    help="scenario friction: per-wheel multiplicative jitter (0.15 = +/-15%%), "
+                         "so wheels on one rover can differ (asymmetric-grip episodes)")
 parser.add_argument("--scenarios", default="",
                     help="path to a scenarios .npz; built + saved if missing, REUSED if present "
                          "(this is what makes the three runs paired)")
@@ -113,15 +125,24 @@ def _mark(msg):
     print(f"[paired] {msg}", flush=True)
 
 
-def _build_scenarios(n, bank_size, rows_avail, t_cols, seed):
-    """Even coverage of paths x terrain levels; columns (variations) uniform random."""
+def _build_scenarios(n, bank_size, rows_avail, t_cols, seed,
+                     scen_fric=False, mu_min=0.47, mu_max=2.0, mu_jitter=0.15):
+    """Even coverage of paths x terrain levels; columns (variations) uniform random.
+    With scen_fric, each scenario also carries per-wheel friction mu[4]: a per-episode
+    base mu ~ U[mu_min, mu_max] (so whole-vehicle low-traction episodes are common)
+    times a per-wheel jitter ~ U[1-j, 1+j] (so asymmetric-grip episodes exist too)."""
     rng = np.random.default_rng(seed)
     reps = int(np.ceil(n / max(bank_size, 1)))
     path_idx = np.tile(np.arange(bank_size), reps)[:n]
     rng.shuffle(path_idx)
     row = rng.choice(np.asarray(rows_avail, dtype=np.int64), size=n)
     col = rng.integers(0, max(int(t_cols), 1), size=n)
-    return path_idx.astype(np.int64), row.astype(np.int64), col.astype(np.int64)
+    mu = None
+    if scen_fric:
+        base = rng.uniform(mu_min, mu_max, size=(n, 1))
+        jit = rng.uniform(1.0 - mu_jitter, 1.0 + mu_jitter, size=(n, 4))
+        mu = np.clip(base * jit, 0.3, 2.0).astype(np.float32)
+    return path_idx.astype(np.int64), row.astype(np.int64), col.astype(np.int64), mu
 
 
 def main():
@@ -159,18 +180,32 @@ def main():
     if len(rows_avail) < len(set(want)):
         _mark(f"NOTE: {len(set(want))} requested levels snapped onto only {len(rows_avail)} distinct "
               f"terrain rows; use multiples of {100.0 / max(denom, 1):.0f}%% to avoid collisions")
+    mu = None
     if args.scenarios and os.path.isfile(args.scenarios):
         d = np.load(args.scenarios)
         path_idx, row, col = d["path_idx"], d["row"], d["col"]
-        _mark(f"REUSING scenarios {args.scenarios}  (n={len(path_idx)}) -> paired with prior runs")
+        mu = d["mu"] if "mu" in d.files else None
+        if mu is not None and args.scen_friction == "off":
+            _mark("--scen-friction off -> IGNORING the scenario friction table (fixed --friction). "
+                  "Only do this if every leg does the same, or the legs won't be friction-paired.")
+            mu = None
+        _mark(f"REUSING scenarios {args.scenarios}  (n={len(path_idx)}"
+              f"{', per-wheel friction table' if mu is not None else ''}) -> paired with prior runs")
+        if mu is None and args.scen_friction == "on":
+            _mark("NOTE: reused scenario file has NO friction table (pre-upgrade npz) -> "
+                  "this run uses the fixed --friction value")
     else:
-        path_idx, row, col = _build_scenarios(args.num_scenarios, raw._bank_size, rows_avail,
-                                              raw._t_cols, args.seed)
+        path_idx, row, col, mu = _build_scenarios(
+            args.num_scenarios, raw._bank_size, rows_avail, raw._t_cols, args.seed,
+            scen_fric=(args.scen_friction == "on"),
+            mu_min=args.mu_min, mu_max=args.mu_max, mu_jitter=args.mu_jitter)
         if args.scenarios:
             os.makedirs(os.path.dirname(os.path.abspath(args.scenarios)), exist_ok=True)
+            extra = {"mu": mu} if mu is not None else {}
             np.savez(args.scenarios, path_idx=path_idx, row=row, col=col,
-                     paths=args.paths, bank=raw._bank_size)
-            _mark(f"BUILT + saved scenarios -> {args.scenarios}  (n={len(path_idx)})")
+                     paths=args.paths, bank=raw._bank_size, **extra)
+            _mark(f"BUILT + saved scenarios -> {args.scenarios}  (n={len(path_idx)}"
+                  f"{', per-wheel friction table' if mu is not None else ''})")
     S = int(len(path_idx))
 
     raw._eval_scenarios = {
@@ -178,6 +213,11 @@ def main():
         "row":      torch.as_tensor(row, dtype=torch.long, device=raw.device),
         "col":      torch.as_tensor(col, dtype=torch.long, device=raw.device),
     }
+    if mu is not None:
+        raw._eval_scenarios["mu"] = torch.as_tensor(np.asarray(mu), dtype=torch.float32,
+                                                    device=raw.device)
+        _mark(f"scenario friction table: mu in [{float(np.min(mu)):.2f}, "
+              f"{float(np.max(mu)):.2f}] per wheel, identical across controllers")
     raw._scenario_ptr = 0
     try:
         raw.reset()   # re-home every env onto scenarios 0..num_envs-1

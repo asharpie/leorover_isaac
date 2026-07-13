@@ -658,7 +658,12 @@ TRAINING_MIN_CURVATURE_ANGLE = 25.0
 TRAINING_MAX_CURVATURE_ANGLE = 120.0
 TRAINING_TOTAL_PATH_DISTANCE = 10.0
 TRAINING_EPISODES_PER_PATH = 4  # Match EPISODES_PER_CONFIGURATION for coupled rotation
-TRAINING_NUM_RANDOM_PATHS = 500
+# LEOROVER_PATH_BANK (2026-07-13): env-overridable so evals can use a LARGER bank of
+# unseen paths than training saw (e.g. 2000 for `leo multieval` diversity). Bank
+# generation is numpy at startup (seconds); every leg of a paired eval must use the
+# SAME value or scenario path indices won't line up (leo.sh passes it to all legs).
+import os as _os_pb
+TRAINING_NUM_RANDOM_PATHS = int(_os_pb.environ.get("LEOROVER_PATH_BANK", "500"))
 
 # =============================================================================
 # SCREENING CONFIGURATION

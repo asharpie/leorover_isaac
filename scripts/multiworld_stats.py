@@ -44,7 +44,8 @@ def _read_pairs(hyb_path: str, lqr_path: str):
                     continue
                 try:
                     d[sid] = (float(r["mean_cte"]), int(float(r["success"])),
-                              float(r["terrain_intensity"]))
+                              float(r["terrain_intensity"]),
+                              float(r.get("friction_intensity", 0.0) or 0.0))
                 except (KeyError, ValueError):
                     continue
         return d
@@ -112,7 +113,7 @@ def main():
           f"{'cteH':>7} {'cteL':>7} {'dCTE':>8}")
     w_dcte, w_dsucc = [], []
     all_d, all_b, all_c, all_h1, all_l1 = [], 0, 0, 0, 0
-    by_level = {}
+    by_level, by_fric = {}, {}
     for name, pairs in worlds:
         cteH = [h[0] for _, h, _ in pairs]; cteL = [l[0] for _, _, l in pairs]
         sH = [h[1] for _, h, _ in pairs];   sL = [l[1] for _, _, l in pairs]
@@ -128,6 +129,9 @@ def main():
             lv = round(h[2])
             acc = by_level.setdefault(lv, [0, 0, 0, 0.0, 0.0])  # n, sH, sL, cteH, cteL
             acc[0] += 1; acc[1] += h[1]; acc[2] += l[1]; acc[3] += h[0]; acc[4] += l[0]
+            fb = "low <40" if h[3] < 40.0 else ("mid 40-70" if h[3] < 70.0 else "high >=70")
+            fa = by_fric.setdefault(fb, [0, 0, 0, 0.0, 0.0])
+            fa[0] += 1; fa[1] += h[1]; fa[2] += l[1]; fa[3] += h[0]; fa[4] += l[0]
 
     n = len(all_d)
     W = len(worlds)
@@ -162,8 +166,20 @@ def main():
         nn, s1, s2, c1, c2 = by_level[lv]
         print(f"{lv:>7} {nn:>7} {100.0*s1/nn:>7.1f} {100.0*s2/nn:>7.1f} "
               f"{c1/nn:>7.4f} {c2/nn:>7.4f}")
+
+    # ---------- pooled per-friction (only informative with scenario-locked friction) ----
+    if len(by_fric) > 1:
+        print(f"\nPOOLED BY FRICTION INTENSITY (all worlds; scenario-locked per-wheel mu)")
+        print(f"{'friction':>10} {'n':>7} {'succH%':>7} {'succL%':>7} {'cteH':>7} {'cteL':>7}")
+        for fb in ("low <40", "mid 40-70", "high >=70"):
+            if fb not in by_fric:
+                continue
+            nn, s1, s2, c1, c2 = by_fric[fb]
+            print(f"{fb:>10} {nn:>7} {100.0*s1/nn:>7.1f} {100.0*s2/nn:>7.1f} "
+                  f"{c1/nn:>7.4f} {c2/nn:>7.4f}")
     print("===============================================================\n")
 
 
 if __name__ == "__main__":
     main()
+# eof
