@@ -203,7 +203,7 @@ We compare three controllers, which share the identical vehicle model, observati
 
 \subsection{Simulation Experiments}
 \subsubsection{Matched-Condition Comparison}
-A central design choice is that all three controllers are evaluated on \emph{exactly the same} episodes. For every evaluation trial we fix the random seed so that the reference path, the terrain patch, the per-episode friction, and the initial pose are identical across LQR, PPO, and hybrid. Consequently any difference in outcome is attributable to the controller alone, and we can apply paired statistical tests. Training paths are randomized (Section~\ref{sec:training}); evaluation, by contrast, uses \emph{discrete} path types so that performance can be attributed to a specific geometry.
+A central design choice is that all three controllers are evaluated on \emph{exactly the same} episodes. Each evaluation episode is drawn from a fixed, ordered list of scenarios that pins the reference path, the terrain patch, and the initial pose, so these are identical across LQR, PPO, and hybrid; the wheel--terrain friction is held at a single controlled level per evaluation run (swept across runs to probe traction sensitivity) rather than randomized per episode, so it too is identical across controllers. Consequently any difference in outcome is attributable to the controller alone, and we can apply paired statistical tests. Training paths are randomized (Section~\ref{sec:training}); evaluation, by contrast, uses \emph{discrete} path types so that performance can be attributed to a specific geometry.
 
 \subsubsection{Evaluation Protocol}
 Each controller is evaluated along two complementary dimensions.
@@ -215,7 +215,7 @@ Each controller is evaluated along two complementary dimensions.
 \item \textbf{Closed polygon (3 variants):} rectangular/triangular loops testing full navigation cycles.
 \end{itemize}
 
-\noindent\textbf{Dimension 2 -- Terrain (randomized, slope-logged).} Terrain patches, slopes, and friction are sampled randomly across evaluation episodes rather than binned into fixed conditions. Because the per-episode terrain slope and friction are \emph{logged}, performance can be analyzed as a function of these variables: with enough episodes the random sampling averages out, and we can additionally condition on slope to determine which controller performs best on, e.g., steep versus shallow terrain. All evaluations use deterministic policy execution with seeds disjoint from training.
+\noindent\textbf{Dimension 2 -- Terrain (randomized, slope-logged).} Terrain patches and slopes are sampled across evaluation episodes rather than binned into fixed conditions, while the wheel--terrain friction is held at a controlled level per run (swept across runs). Because the per-episode terrain slope is \emph{logged} and the friction level is fixed and known per run, performance can be analyzed as a function of these variables: with enough episodes the random sampling averages out, and we can additionally condition on slope to determine which controller performs best on, e.g., steep versus shallow terrain. All evaluations use deterministic policy execution with seeds disjoint from training.
 
 \subsubsection{Performance Metrics}
 For each episode we record time series of position $(x,y,z)$, heading $\theta$, commanded and actual velocities, instantaneous reward, slip estimate, terrain slope, and distance to the active waypoint. Per-episode summaries:

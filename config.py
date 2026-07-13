@@ -141,6 +141,15 @@ TERRAIN_HSCALE = 0.025             # terrain facet size (m); < wheel radius 0.06
 # env count. Sweep at runtime with LEOROVER_TERRAIN_ROWS / COLS / HSCALE.
 TERRAIN_NUM_DIFFICULTY_ROWS = 6    # ADR difficulty levels (0..100% intensity)
 TERRAIN_NUM_VARIATIONS = 2         # column variety per level; 6*2=12 patches @0.025m ~5.5M tris
+# TERRAIN_SEED (2026-07-12): master seed for the terrain bank AND the soil-zone map
+# (soil.py uses TERRAIN_SEED+777). Was implicit before (getattr(..., 42) fallbacks in
+# mars_heightfield.py / soil.py). Defined here + env-overridable so a HELD-OUT world can
+# be generated for generalization checks:
+#   LEOROVER_TERRAIN_SEED=123 leo quickeval hybrid   # fresh 12-patch bank + fresh soil map
+# Checkpoints stay compatible across seeds - the policy observes only local features
+# (path-frame errors, slope lookahead, slip), never terrain identity or position.
+import os as _os_ts
+TERRAIN_SEED = int(_os_ts.environ.get("LEOROVER_TERRAIN_SEED", "42"))
 # Finer facets multiply per-wheel CONTACTS: the 0.025 m bank overflowed PhysX's default ~67M
 # collision stack at 4096 envs -> "collisionStackSize buffer overflow ... Contacts dropped"
 # -> rover falls through. 2^29 (~536M) covers 4096 envs @ 0.025 m on the 4090. Lower to 2^28
@@ -190,7 +199,10 @@ TERRAIN_REST_OFFSET = 0.04
 #    design, so this is where the hybrid's structural headroom lives. Checkpoints trained
 #    without soil are NOT obs-compatible with soil runs (and vice versa). Override with
 #    LEOROVER_SOIL=0/1; coefficients via LEOROVER_SOIL_* (see leorover_isaac/terrain/soil.py).
-SOIL_MODEL = False                 # default off: phase-1 rigid world stays reproducible
+SOIL_MODEL = True                  # DEFAULT ON (2026-07-12): the sand world is the project
+                                   # baseline now — train/eval/trace all soil-on with no flags.
+                                   # Set LEOROVER_SOIL=0 to reproduce the phase-1 rigid world
+                                   # or to load pre-soil checkpoints (obs dims differ).
 # 4) TERRAIN_SMOOTH_SIGMA: Gaussian blur (in 0.1 m cells) applied to each hill patch before
 #    it's meshed, so the 6.25 cm-wheel rover isn't tripped by nearest-resize / grid-cell
 #    facets on the hills (the 24 deg local slopes on "gentle" terrain were largely this
@@ -1228,7 +1240,10 @@ PPO_W_PROGRESS = 10.0          # v33.9: 20 → 10. Rebalanced with reduced termi
 # no separate residual to penalize; the action IS the policy).
 # Term: r_effort = -PPO_W_EFFORT * (residual_v_norm^2 + residual_omega_norm^2)
 # where residual_*_norm = actual residual / MAX_RESIDUAL_*  (so range [-1, +1])
-PPO_W_EFFORT = 0.5
+# 2026-07-12: 0.5 -> 0.01. At 0.5 the effort penalty collapsed the residual to zero
+# (the overnight-park failure); 0.01 + the resid-credit term is the validated sand
+# baseline (model_25400). Override with LEOROVER_W_EFFORT.
+PPO_W_EFFORT = 0.01
 # v33.9 (2026-05-26): SUCCESS_BONUS 50 → 200, FAILURE_PENALTY 30 → 50. With per-step
 # reward weights reduced by ~2x, terminal magnitudes had to grow to maintain
 # their visibility in cumulative episode reward. Total episodic reward

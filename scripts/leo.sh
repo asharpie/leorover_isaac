@@ -26,7 +26,9 @@ ISAAC_PY="$HOME/Desktop/Core_libraries/NVIDIA_GPU/IsaacLab/_isaac_sim/python.sh"
 GPU_TOTAL_MIB=24564                        # RTX 4090
 
 # --- the validated reward fix (2026-06-20: parked -> 59% success). --raw skips it.
-FIX_ENV=(LEOROVER_W_EFFORT=${LEOROVER_W_EFFORT:-0.05} LEOROVER_W_PROGRESS=${LEOROVER_W_PROGRESS:-150} LEOROVER_W_SMOOTH=${LEOROVER_W_SMOOTH:-0.1})
+# 2026-07-12: W_EFFORT default 0.05 -> 0.01 (the validated sand-baseline recipe:
+# W_EFFORT=0.01 + resid-credit 15 + slip-exempt 1.0, now also the config/env defaults).
+FIX_ENV=(LEOROVER_W_EFFORT=${LEOROVER_W_EFFORT:-0.01} LEOROVER_W_PROGRESS=${LEOROVER_W_PROGRESS:-150} LEOROVER_W_SMOOTH=${LEOROVER_W_SMOOTH:-0.1})
 # exploration + rollout, overridable per run with --ent / --rollout.
 #   ent 0.001 (2026-06-21, down from 0.005): lets action-std fall so the policy sharpens
 #     instead of failing ~40% of episodes from exploration noise -> higher success.
@@ -170,7 +172,10 @@ cmd_train() {
   [ -z "$gym" ] && { err "unknown task '${alias:-}'  (use: hybrid | ppo | flat)"; exit 1; }
   # residual default respects a pre-set LEOROVER_RES_SCALE (it used to be silently
   # clobbered to 0.33 -- the 20260706_173712 run trained at 0.33 despite the env var).
-  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout="" speed=1 residual="${LEOROVER_RES_SCALE:-0.33}"
+  # 2026-07-12: default 0.33 -> 0.5, matching the sand champion (model_25400) and the
+  # new env-side default, so train/eval need no flags. Pre-July 0.33 checkpoints:
+  # pass --residual 0.33 (or LEOROVER_RES_SCALE=0.33) explicitly.
+  local envs=4096 iters="" raw=0 fg=0 ent="$DEFAULT_ENT" rollout="" speed=1 residual="${LEOROVER_RES_SCALE:-0.5}"
   while [ $# -gt 0 ]; do case "$1" in
     --envs)     envs="${2:?}"; shift 2;;
     --iters)    iters="${2:?}"; shift 2;;
@@ -199,7 +204,7 @@ cmd_train() {
     [ -n "$rollout" ] && pre+=("LEOROVER_NUM_STEPS=$rollout")
   fi
   [ "$speed" != "1" ] && pre+=("LEOROVER_SPEED_SCALE=$speed")
-  pre+=("LEOROVER_RES_SCALE=$residual")   # always pass it; default 0.33 (env default matches)
+  pre+=("LEOROVER_RES_SCALE=$residual")   # always pass it; default 0.5 (env default matches)
 
   local log="$LOGDIR/${exp}_$(date +%Y%m%d_%H%M%S).log"
   say "task   : $gym"

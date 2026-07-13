@@ -433,15 +433,18 @@ class LeoRoverBaseEnv(DirectRLEnv):
         _spd = max(1.0, float(_os.environ.get("LEOROVER_SPEED_SCALE",
                                               str(getattr(cfg_mod, "KINEMATIC_SPEED_SCALE", 1.0)))))
         self._speed_scale = _spd   # used to scale the trajectory-profile corner-crawl floor
-        # LEOROVER_RES_SCALE (DEFAULT 0.33 as of 2026-06-24): multiplies the PPO residual
+        # LEOROVER_RES_SCALE (DEFAULT 0.5 as of 2026-07-12): multiplies the PPO residual
         # authority (max_residual_velocity/omega). Full authority (1.0) lets the noisy
         # residual shove a good LQR trajectory off-path -> a deterministic trace dropped
         # from the pure-LQR ~94% to ~43%, and full-residual training oscillates wildly.
-        # 0.33 was validated stable (deterministic ~88-92%) and is now the default so
-        # training, `leo trace`, and `leo eval` all use the SAME residual scale (a policy
-        # trained at 0.33 but evaluated at 1.0 would have a 3x-too-large residual). 0.0 ==
-        # pure LQR. Override with the env var / `leo train --residual F`.
-        _rscale = max(0.0, float(_os.environ.get("LEOROVER_RES_SCALE", "0.33")))
+        # History: 0.33 was the first stable default (2026-06-24, rigid world); 0.5 is
+        # what the sand champion (model_25400) trained and evaluated at, so it is now the
+        # default so training, `leo trace`, and `leo eval` all use the SAME residual
+        # scale WITH NO FLAGS (a policy trained at one scale but evaluated at another has
+        # a mis-sized residual — train/eval MUST match; pre-July 0.33 checkpoints need
+        # LEOROVER_RES_SCALE=0.33). 0.0 == pure LQR. Override with the env var /
+        # `leo train --residual F`.
+        _rscale = max(0.0, float(_os.environ.get("LEOROVER_RES_SCALE", "0.5")))
         self._controller = VectorizedLQR(
             n, device=dev,
             wheel_radius=0.3 / _spd,
@@ -884,8 +887,9 @@ class LeoRoverBaseEnv(DirectRLEnv):
             mw = max(cfg_mod.MAX_RESIDUAL_OMEGA, 1e-6)
             rvn = self._last_residual[:, 0] / mv
             rwn = self._last_residual[:, 1] / mw
-            # SLIP-GATED V-EFFORT EXEMPTION (phase 2, opt-in: LEOROVER_EFFORT_SLIP_EXEMPT in
-            # [0,1], default off). On sand the effort penalty killed the VELOCITY channel
+            # SLIP-GATED V-EFFORT EXEMPTION (phase 2, LEOROVER_EFFORT_SLIP_EXEMPT in
+            # [0,1], DEFAULT 1.0 as of 2026-07-12 — the sand-baseline reward; set 0 to
+            # disable). On sand the effort penalty killed the VELOCITY channel
             # (res_v -> 0.03 while res_w stayed alive at ~0.11), yet slip is the failure
             # axis and speed modulation is THE dig-in escape tool. Make v-corrections
             # progressively free as measured wheel slip rises: no relief below 0.35 slip
@@ -895,7 +899,7 @@ class LeoRoverBaseEnv(DirectRLEnv):
             if not hasattr(self, "_eff_slip_exempt"):
                 import os as _os_se
                 self._eff_slip_exempt = min(1.0, max(0.0, float(
-                    _os_se.environ.get("LEOROVER_EFFORT_SLIP_EXEMPT", "0.0"))))
+                    _os_se.environ.get("LEOROVER_EFFORT_SLIP_EXEMPT", "1.0"))))
                 if self._eff_slip_exempt > 0.0:
                     print(f"[reward] slip-gated v-effort exemption = {self._eff_slip_exempt:.2f} "
                           f"(free v-corrections as slip ramps 0.35 -> 0.70)", flush=True)
@@ -914,9 +918,10 @@ class LeoRoverBaseEnv(DirectRLEnv):
         # collapses to zero under any effort penalty. This term credits the residual for
         # the marginal reduction in predicted next-step CTE it produces OVER the LQR
         # baseline: +w when the residual steers toward the path, -w when away. It is a
-        # DIRECTIONAL regularizer (unlike the blanket L2 r_eff), so pair it with
-        # LEOROVER_W_EFFORT=0. Off by default (weight 0); set LEOROVER_W_RESID_CREDIT.
-        w_credit = self._ppo.get('ppo_w_resid_credit', 0.0)
+        # DIRECTIONAL regularizer (unlike the blanket L2 r_eff), so pair it with a
+        # small/zero LEOROVER_W_EFFORT. DEFAULT 15 as of 2026-07-12 (the validated
+        # sand-baseline reward, model_25400); LEOROVER_W_RESID_CREDIT overrides (0 = off).
+        w_credit = self._ppo.get('ppo_w_resid_credit', 15.0)
         if self.cfg.use_lqr_baseline and w_credit > 0.0:
             cte_base = self._predicted_cte_for_cmd(pos_local[:, :2], yaw,
                                                    self._last_baseline[:, 0], self._last_baseline[:, 1])
