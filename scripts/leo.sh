@@ -81,6 +81,14 @@ ${b}EVALUATE${x}
                      THE eval: all 3 controllers over the IDENTICAL episodes (same path+terrain+
                      pose+friction) -> paired t-test / McNemar / Cohen's d. Defaults: 9 discrete
                      geometries, 90k scenarios. --paths random = slope study. Usually just 'leo eval'.
+  leo multieval [--worlds N] [--seedbase S] [--seeds a,b,..] [--n S] [--paths random|discrete]
+                [--friction F] [--envs N]
+                     GENERALIZATION eval: the paired protocol repeated over MANY regenerated
+                     worlds (fresh terrain bank + soil map per seed via LEOROVER_TERRAIN_SEED).
+                     ONE shared scenario list -> episode j is identical for hybrid and LQR in
+                     every world. Defaults: 12 worlds (seeds 201..212) x 12k random-path
+                     scenarios = 144 distinct terrain patches. Pooled + per-world stats at the
+                     end (multiworld_stats.py). Overnight-sized: ~20-25 min/world.
   leo quickeval <hybrid|lqr|ppo> [--levels 0,20,..] [--envs N] [--steps N]
                      quick single-controller terrain sweep -> evals/<algo>_<ts>.csv (unpaired, fast)
   leo compare        side-by-side success/progress-by-terrain of the latest quickeval CSVs
@@ -405,6 +413,62 @@ cmd_pairedeval() {
   say "pull to laptop:  scp -r ${BOX_HOST}:$dir \$HOME\\Downloads\\leo_csvs\\"
 }
 
+# PAIRED protocol repeated over MANY regenerated worlds -> the generalization eval.
+# Each seed regenerates ALL 12 terrain patches AND the soil-softness map (config reads
+# LEOROVER_TERRAIN_SEED; soil zone seed = seed+777). ONE scenario file is built by the
+# first leg and reused by EVERY leg, so scenario j is byte-identical for both
+# controllers within a world, and the same (path, spawn, terrain row/col) across worlds
+# - only the world realization differs. Friction fixed (same value everywhere).
+cmd_multieval() {
+  local worlds=12 seedbase=201 seeds="" nscen=12000 paths="random" friction="1.0" \
+        levels="0,20,40,60,80,100" envs=1024
+  while [ $# -gt 0 ]; do case "$1" in
+    --worlds)   worlds="${2:?}"; shift 2;;
+    --seedbase) seedbase="${2:?}"; shift 2;;
+    --seeds)    seeds="${2:?}"; shift 2;;      # explicit comma list; overrides --worlds/--seedbase
+    --n)        nscen="${2:?}"; shift 2;;
+    --paths)    paths="${2:?}"; shift 2;;
+    --friction) friction="${2:?}"; shift 2;;
+    --levels)   levels="${2:?}"; shift 2;;
+    --envs)     envs="${2:?}"; shift 2;;
+    *) err "unknown flag '$1'"; exit 1;;
+  esac; done
+  [ -z "$seeds" ] && seeds="$(seq -s, "$seedbase" $((seedbase + worlds - 1)))"
+  local hrun hckpt
+  hrun="$(latest_run leo_rover_mars_hybrid)"; [ -z "$hrun" ] && { err "no hybrid run to eval (train one first)"; exit 1; }
+  hckpt="$(latest_ckpt "$hrun")"; { [ -z "$hckpt" ] || [ ! -f "$hckpt" ]; } && { err "no hybrid checkpoint"; exit 1; }
+  local ts root scen; ts="$(date +%Y%m%d_%H%M%S)"; root="$REPO/evals/multiworld/$ts"; mkdir -p "$root"; scen="$root/scenarios.npz"
+  say "MULTI-WORLD paired eval  seeds=[${b}$seeds${x}]  n=$nscen/world  paths=$paths friction=$friction envs=$envs"
+  say "hybrid ckpt: $hckpt"
+  say "shared scenario list: episode j identical across controllers AND worlds; only the world changes"
+  local used; used="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')"
+  { [ -n "${used:-}" ] && [ "$used" -gt 3000 ]; } && warn "GPU already has >3 GB in use - stop other jobs first."
+  warn "starting in 4s - Ctrl-C to abort"; sleep 4
+  local s dir ok=0 failed=""
+  for s in ${seeds//,/ }; do
+    dir="$root/world_$s"; mkdir -p "$dir"
+    say "=== world seed $s  ($((ok + 1)) of $(echo "$seeds" | tr ',' '\n' | wc -l)) ==="
+    if ! LEOROVER_TERRAIN_SEED="$s" "$LAUNCH" scripts/paired_eval.py \
+          --task Isaac-LeoRover-Mars-Hybrid-v0 --checkpoint "$hckpt" \
+          --paths "$paths" --num_scenarios "$nscen" --levels "$levels" --friction "$friction" \
+          --num_envs "$envs" --scenarios "$scen" --out "$dir/hybrid.csv"; then
+      warn "world $s: hybrid leg FAILED - skipping this world"; failed="$failed $s"; continue
+    fi
+    if ! LEOROVER_TERRAIN_SEED="$s" "$LAUNCH" scripts/paired_eval.py \
+          --task Isaac-LeoRover-Mars-Hybrid-v0 --checkpoint "$hckpt" --zero-residual \
+          --paths "$paths" --friction "$friction" --num_envs "$envs" \
+          --scenarios "$scen" --out "$dir/lqr.csv"; then
+      warn "world $s: lqr leg FAILED - hybrid.csv kept, world excluded from pooled stats"; failed="$failed $s"; continue
+    fi
+    ok=$((ok + 1))
+  done
+  echo; say "worlds completed: $ok${failed:+   ${y}failed:${failed}${x}}"
+  say "pooled + per-world paired statistics:"
+  python3 "$REPO/scripts/multiworld_stats.py" "$root" | tee "$root/stats_multiworld.txt"
+  echo; say "done -> $root"
+  say "pull:  scp -r ${BOX_HOST}:$root \$HOME/Downloads/box_evals/"
+}
+
 # --- dispatch ----------------------------------------------------------------
 case "${1:-help}" in
   train)              shift; cmd_train "$@";;
@@ -421,6 +485,7 @@ case "${1:-help}" in
   quickeval|quick)    shift; cmd_eval "$@";;
   compare|cmp)        cmd_compare;;
   pairedeval|paired)  shift; cmd_pairedeval "$@";;
+  multieval|multi)    shift; cmd_multieval "$@";;
   evalcsv)            shift; cmd_evalcsv "$@";;
   tb|tensorboard)     cmd_tb;;
   help|-h|--help|"")   usage;;
