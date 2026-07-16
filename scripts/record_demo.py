@@ -157,18 +157,20 @@ def main():
     runner.load(ckpt)
     policy = runner.get_inference_policy(device=wrapped.unwrapped.device)
 
-    # one zero-action step so lazy pieces (soil model, buffers) exist
+    # One zero-action step so lazy pieces (soil model, buffers) exist, then lift the
+    # rovers out of the raycast footprint. NOTE: once anything has stepped under
+    # torch.inference_mode(), the sim buffers ARE inference tensors, so EVERY later
+    # write (this lift, the per-leg resets) must also run inside inference_mode, or
+    # PyTorch raises "Inplace update to inference tensor outside InferenceMode".
     with torch.inference_mode():
         obs, _ = wrapped.get_observations()
         a0 = policy(obs)
         wrapped.step(torch.zeros_like(a0))
-
-    # --- static geometry: terrain height grid + soil zone per scenario ----------
-    _mark("lifting rovers + raycasting terrain grids...")
-    st = raw.robot.data.root_state_w.clone()
-    st[:, 2] += 60.0
-    raw.robot.write_root_state_to_sim(st)
-    with torch.inference_mode():
+        # --- static geometry: lift rovers, settle one step ------------------------
+        _mark("lifting rovers + raycasting terrain grids...")
+        st = raw.robot.data.root_state_w.clone()
+        st[:, 2] += 60.0
+        raw.robot.write_root_state_to_sim(st)
         wrapped.step(torch.zeros_like(a0))          # let PhysX ingest the new poses
     origins = raw._terrain.env_origins.detach().cpu().numpy().astype(np.float32)  # [K,3]
     G, half = int(args.grid), float(args.extent)
@@ -179,11 +181,12 @@ def main():
         if not ok:
             heights[e] += origins[e, 2]
         if raw._soil is not None:
-            xs = torch.linspace(-half, half, G, device=raw.device)
-            gx, gy = torch.meshgrid(xs, xs, indexing="xy")
-            pts = torch.stack([gx.reshape(-1) + float(origins[e, 0]),
-                               gy.reshape(-1) + float(origins[e, 1])], dim=1)
-            soil[e] = raw._soil.zone_at(pts).reshape(G, G).detach().cpu().numpy()
+            with torch.inference_mode():
+                xs = torch.linspace(-half, half, G, device=raw.device)
+                gx, gy = torch.meshgrid(xs, xs, indexing="xy")
+                pts = torch.stack([gx.reshape(-1) + float(origins[e, 0]),
+                                   gy.reshape(-1) + float(origins[e, 1])], dim=1)
+                soil[e] = raw._soil.zone_at(pts).reshape(G, G).cpu().numpy()
         _mark(f"  scenario {e}: terrain z {heights[e].min():.2f}..{heights[e].max():.2f} m, "
               f"soil {soil[e].min():.2f}..{soil[e].max():.2f}")
 
@@ -196,8 +199,9 @@ def main():
     legs = {}
     for name, zero in leg_plan:
         raw._scenario_ptr = 0
-        env.reset()
-        obs, _ = wrapped.get_observations()
+        with torch.inference_mode():                 # resets WRITE sim state (see note above)
+            env.reset()
+            obs, _ = wrapped.get_observations()
         P, Q, WH, SL, CT = [], [], [], [], []
         done_step = np.full(K, -1, dtype=np.int32)
         _mark(f"recording {name} leg...")
@@ -207,15 +211,15 @@ def main():
                 if zero:
                     act = torch.zeros_like(act)
                 obs, _, dones, _ = wrapped.step(act)
-            P.append(raw.robot.data.root_pos_w.detach().cpu().numpy().copy())
-            Q.append(raw.robot.data.root_quat_w.detach().cpu().numpy().copy())   # (w,x,y,z)
-            WH.append(raw.robot.data.joint_pos[:, raw._soil_jids].detach().cpu().numpy().copy()
-                      if raw._soil is not None else np.zeros((K, 4), dtype=np.float32))
-            SL.append(raw._soil_slip.abs().mean(dim=1).detach().cpu().numpy().copy()
-                      if raw._soil is not None else np.zeros(K, dtype=np.float32))
-            cte, _ = raw._true_cte_and_along()
-            CT.append(cte.abs().detach().cpu().numpy().copy())
-            d = dones.reshape(-1).detach().cpu().numpy().astype(bool)
+                P.append(raw.robot.data.root_pos_w.cpu().numpy().copy())
+                Q.append(raw.robot.data.root_quat_w.cpu().numpy().copy())   # (w,x,y,z)
+                WH.append(raw.robot.data.joint_pos[:, raw._soil_jids].cpu().numpy().copy()
+                          if raw._soil is not None else np.zeros((K, 4), dtype=np.float32))
+                SL.append(raw._soil_slip.abs().mean(dim=1).cpu().numpy().copy()
+                          if raw._soil is not None else np.zeros(K, dtype=np.float32))
+                cte, _ = raw._true_cte_and_along()
+                CT.append(cte.abs().cpu().numpy().copy())
+                d = dones.reshape(-1).cpu().numpy().astype(bool)
             for e in range(K):
                 if d[e] and done_step[e] < 0:
                     done_step[e] = t

@@ -517,6 +517,8 @@ cmd_record() {
   "$LAUNCH" scripts/record_demo.py --mode "$mode" --num "$num" --level "$level" \
       ${friction:+--friction "$friction"} --seed "$seed" --out "$out" \
       || { err "recording failed"; exit 1; }
+  # run_lab.sh can swallow python's exit code - trust the artifact, not the status
+  [ -f "$out" ] || { err "recording failed (no $out - see the traceback above)"; exit 1; }
   python3 "$REPO/scripts/demo_to_html.py" "$out" || { err "html conversion failed"; exit 1; }
   html="${out%.npz}.html"
   echo
