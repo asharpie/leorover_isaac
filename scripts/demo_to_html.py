@@ -104,6 +104,7 @@ TEMPLATE = r"""<!DOCTYPE html>
  <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>
  <input id="scrub" type="range" min="0" max="1000" value="0">
  <label><input id="follow" type="checkbox" checked> follow</label>
+ <label><input id="wire" type="checkbox"> heightfield</label>
 </div>
 <script type="importmap">{"imports":{
  "three":"https://unpkg.com/three@0.160.0/build/three.module.js",
@@ -173,22 +174,35 @@ class Trail{constructor(max){this.max=max;this.n=0;
   this.line.geometry.attributes.color.needsUpdate=true;}
  reset(){this.n=0;this.line.geometry.setDrawRange(0,0);}}
 
-let world=null;
+let world=null, wireMesh=null;
 function buildScenario(si){
  if(world)scene.remove(world); world=new THREE.Group(); scene.add(world);
  const S=DATA.scenarios[si], o=S.origin;
+ // elevation range for brightness shading (hills read even under the soil tint)
+ let zmin=1e9,zmax=-1e9;
+ for(const row of S.heights)for(const h of row){if(h<zmin)zmin=h;if(h>zmax)zmax=h;}
+ const zrng=Math.max(zmax-zmin,1e-6);
+ document.getElementById('info').textContent=
+  `terrain ${DATA.meta.level}% (relief ${zrng.toFixed(2)} m) | friction ${DATA.meta.friction} | ${DATA.meta.ckpt}`;
  const geo=new THREE.PlaneGeometry(2*HALF,2*HALF,G-1,G-1);
  const pa=geo.attributes.position, cols=new Float32Array(pa.count*3);
  const firm=new THREE.Color(0xcaa06a), sand=new THREE.Color(0x6b4a2b), c=new THREE.Color();
  for(let i=0;i<pa.count;i++){
-  const ix=i%G, iy=Math.floor(i/G), gy=G-1-iy;
-  pa.setZ(i,S.heights[gy][ix]-o[2]);
+  const ix=i%G, iy=Math.floor(i/G), gy=G-1-iy, h=S.heights[gy][ix];
+  pa.setZ(i,h-o[2]);
   c.copy(firm).lerp(sand,S.soil[gy][ix]);
+  c.multiplyScalar(0.7+0.5*(h-zmin)/zrng);          // higher ground = brighter
   cols.set([c.r,c.g,c.b],i*3);}
  geo.setAttribute('color',new THREE.BufferAttribute(cols,3));
  geo.computeVertexNormals();
  const ter=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({vertexColors:true,roughness:1,metalness:0}));
  ter.position.set(o[0],o[1],o[2]); world.add(ter);
+ // the raw heightfield mesh itself, as a toggleable wireframe overlay
+ wireMesh=new THREE.Mesh(geo.clone(),new THREE.MeshBasicMaterial(
+   {wireframe:true,color:0x9db4d6,transparent:true,opacity:0.28}));
+ wireMesh.position.set(o[0],o[1],o[2]+.005);
+ wireMesh.visible=document.getElementById('wire').checked;
+ world.add(wireMesh);
  const grid=new THREE.GridHelper(2*HALF,16,0x333f55,0x222b3a);
  grid.rotation.x=Math.PI/2; grid.position.set(o[0],o[1],o[2]+.01); world.add(grid);
  const hAt=(x,y)=>{const fx=(x-o[0]+HALF)/(2*HALF)*(G-1),fy=(y-o[1]+HALF)/(2*HALF)*(G-1);
@@ -225,6 +239,7 @@ playBtn.onclick=()=>{playing=!playing;playBtn.innerHTML=playing?'&#9646;&#9646;'
 const scrub=document.getElementById('scrub');
 scrub.oninput=()=>{t=scrub.value/1000*maxT(+scenSel.value);
  for(const k in R){R[k].trail.reset();R[k].last=-1;}};
+document.getElementById('wire').onchange=e=>{if(wireMesh)wireMesh.visible=e.target.checked;};
 
 const qa=new THREE.Quaternion(), qb=new THREE.Quaternion(), yAxis=new THREE.Vector3(0,1,0);
 function pose(k,tt){
