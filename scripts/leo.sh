@@ -97,6 +97,10 @@ ${b}EVALUATE${x}
                      quick single-controller terrain sweep -> evals/<algo>_<ts>.csv (unpaired, fast)
   leo compare        side-by-side success/progress-by-terrain of the latest quickeval CSVs
   leo evalcsv <algo> print the scp line to pull a quickeval CSV to your laptop
+  leo record [pair|hybrid|lqr|ppo] [--num N] [--level P] [--friction F] [--seed S]
+                     record real episodes -> ONE interactive 3D HTML replay (for demos).
+                     pair (default): hybrid + pure-LQR side-by-side on IDENTICAL scenarios.
+                     Prints the scp line to pull the .html; open it in any browser.
   leo tb             launch TensorBoard for the latest run (prints the SSH tunnel command)
 
 ${b}CONTROL${x}
@@ -482,6 +486,46 @@ cmd_multieval() {
   say "pull:  scp -r ${BOX_HOST}:$root \$HOME/Downloads/box_evals/"
 }
 
+# Record a 3D demo replay: real episodes, headless (works around the driver-595
+# GUI segfault), converted straight to a single interactive HTML file. `pair`
+# (also `hybrid`/`lqr`) records hybrid + pure-LQR on IDENTICAL scenarios in one
+# pass = the side-by-side demo; `ppo` records the pure-PPO policy alone.
+cmd_record() {
+  local mode="pair" num=2 level=60 friction="" seed=7
+  case "${1:-}" in
+    hybrid|lqr|pair) mode="pair"; shift;;
+    ppo)             mode="ppo";  shift;;
+    ""|--*)          : ;;   # no target (or first arg is a flag) -> default pair
+    *) err "unknown target '$1'  (use: pair | hybrid | lqr | ppo)"; exit 1;;
+  esac
+  while [ $# -gt 0 ]; do case "$1" in
+    --num)      num="${2:?}"; shift 2;;
+    --level)    level="${2:?}"; shift 2;;
+    --friction) friction="${2:?}"; shift 2;;
+    --seed)     seed="${2:?}"; shift 2;;
+    *) err "unknown flag '$1'"; exit 1;;
+  esac; done
+  local used; used="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')"
+  if [ -n "${used:-}" ] && [ "$used" -gt 3000 ]; then
+    warn "GPU has >3 GB in use (training?). Recording needs the GPU - run 'leo stop' first,"
+    warn "record (~3 min), then restart training. Ctrl-C now to abort."
+    sleep 6
+  fi
+  local ts out html; ts="$(date +%Y%m%d_%H%M%S)"
+  out="$REPO/evals/demo_${mode}_${ts}.npz"; mkdir -p "$REPO/evals"
+  say "record : ${b}$mode${x}   scenarios=$num  level=${level}%  friction=${friction:-1.0}  seed=$seed"
+  "$LAUNCH" scripts/record_demo.py --mode "$mode" --num "$num" --level "$level" \
+      ${friction:+--friction "$friction"} --seed "$seed" --out "$out" \
+      || { err "recording failed"; exit 1; }
+  python3 "$REPO/scripts/demo_to_html.py" "$out" || { err "html conversion failed"; exit 1; }
+  html="${out%.npz}.html"
+  echo
+  say "demo ready -> ${b}$html${x}"
+  say "download to your laptop - run this in PowerShell:"
+  echo "    scp ${BOX_HOST}:$html \$env:USERPROFILE\\Downloads\\box_evals\\"
+  say "then double-click the file. Controls: drag=orbit, wheel=zoom, spacebar buttons for play/speed."
+}
+
 # --- dispatch ----------------------------------------------------------------
 case "${1:-help}" in
   train)              shift; cmd_train "$@";;
@@ -499,6 +543,7 @@ case "${1:-help}" in
   compare|cmp)        cmd_compare;;
   pairedeval|paired)  shift; cmd_pairedeval "$@";;
   multieval|multi)    shift; cmd_multieval "$@";;
+  record|demo)        shift; cmd_record "$@";;
   evalcsv)            shift; cmd_evalcsv "$@";;
   tb|tensorboard)     cmd_tb;;
   help|-h|--help|"")   usage;;
