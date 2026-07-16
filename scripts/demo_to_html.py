@@ -31,23 +31,39 @@ def build_payload(npz_path: str) -> str:
     K = int(meta["num"]); G = int(meta["grid"]); half = float(meta["extent"])
     legs_present = [n for n in LEG_ORDER if f"{n}_pos" in d.files]
     origins = d["origins"]
+    SKIP = 3   # drop the spawn-settle frames (rovers start 0.3 m up and drop in ~0.5 s)
+
+    def h_at(e, xy):
+        ix = np.clip(np.round((xy[:, 0] - origins[e, 0] + half) / (2 * half) * (G - 1)), 0, G - 1).astype(int)
+        iy = np.clip(np.round((xy[:, 1] - origins[e, 1] + half) / (2 * half) * (G - 1)), 0, G - 1).astype(int)
+        return d["heights"][e][iy, ix]
+
     scenarios = []
     for e in range(K):
         legs = {}
+        clear = []
         for name in legs_present:
             T = int(d[f"{name}_done"][e]); T = T if T > 0 else d[f"{name}_pos"].shape[0] - 1
-            sl = slice(0, T + 1)
+            s0 = SKIP if T + 1 > SKIP + 5 else 0
+            sl = slice(s0, T + 1)
+            p = d[f"{name}_pos"][sl, e]
             q = d[f"{name}_quat"][sl, e]          # isaac (w,x,y,z) -> three (x,y,z,w)
+            clear.append(p[:, 2] - h_at(e, p[:, :2]))
             legs[name] = dict(
-                pos=_r(d[f"{name}_pos"][sl, e]),
+                pos=_r(p),
                 quat=_r(np.stack([q[:, 1], q[:, 2], q[:, 3], q[:, 0]], axis=1), 4),
                 wheels=_r(d[f"{name}_wheels"][sl, e]),
                 slip=_r(d[f"{name}_slip"][sl, e]),
                 cte=_r(d[f"{name}_cte"][sl, e]),
             )
+        # base-link height above ground: shift the drawn model down by this much so
+        # the wheels visually touch the terrain (the physics was always in contact;
+        # the recorded pose is the base-link origin, which sits above the contact).
+        zoff = float(np.clip(np.median(np.concatenate(clear)), 0.0, 0.35))
         n = int(d["nwp"][e])
         scenarios.append(dict(
             origin=_r(origins[e]),
+            zoff=round(zoff, 3),
             heights=_r(d["heights"][e], 2),
             soil=_r(d["soil"][e], 2),
             wps=_r(d["wps"][e, :n] + origins[e, :2]),
@@ -123,19 +139,23 @@ const sun=new THREE.DirectionalLight(0xfff2dd,1.5); sun.position.set(30,-20,50);
 addEventListener('resize',()=>{cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix();
  ren.setSize(innerWidth,innerHeight);});
 
-function rover(color){
+function rover(color,zoff){
+ // zoff = base-link height above the ground (from the data). The model was built
+ // with its origin at ground level, but the recorded pose is the base link, which
+ // rides zoff above ground - so shift every part down by zoff to restore contact.
+ const dz=(zoff||0);
  const g=new THREE.Group();
  const body=new THREE.Mesh(new THREE.BoxGeometry(.42,.30,.14),
    new THREE.MeshStandardMaterial({color,roughness:.5}));
- body.position.z=.11; g.add(body);
+ body.position.z=.11-dz; g.add(body);
  const mast=new THREE.Mesh(new THREE.BoxGeometry(.03,.03,.16),
    new THREE.MeshStandardMaterial({color:0xffffff}));
- mast.position.set(.12,0,.26); g.add(mast);
+ mast.position.set(.12,0,.26-dz); g.add(mast);
  g.wheels=[];
  const wg=new THREE.CylinderGeometry(.0625,.0625,.07,14);
  for(const[dx,dy]of[[.15,.17],[.15,-.17],[-.15,.17],[-.15,-.17]]){
   const w=new THREE.Mesh(wg,new THREE.MeshStandardMaterial({color:0x222831,roughness:.9}));
-  w.position.set(dx,dy,.0625); g.add(w); g.wheels.push(w);}
+  w.position.set(dx,dy,.0625-dz); g.add(w); g.wheels.push(w);}
  return g;}
 
 const slipCol=s=>new THREE.Color().setHSL(Math.max(0,.33*(1-Math.min(1,(s-.3)/.5))),.85,.5);
@@ -185,7 +205,7 @@ function buildScenario(si){
    new THREE.MeshBasicMaterial({color:0x57d977})); goal.position.copy(pp[pp.length-1]); world.add(goal);
  const R={};
  for(const k of DATA.legs){const L=S.legs[k];
-  R[k]={mesh:rover(COL[k]),trail:new Trail(L.pos.length+4),leg:L,last:-1};
+  R[k]={mesh:rover(COL[k],S.zoff),trail:new Trail(L.pos.length+4),leg:L,last:-1};
   world.add(R[k].mesh); world.add(R[k].trail.line);}
  cam.position.set(o[0]-7,o[1]-7,o[2]+5.5);
  ctl.target.set(o[0],o[1],o[2]+.6);

@@ -491,7 +491,7 @@ cmd_multieval() {
 # (also `hybrid`/`lqr`) records hybrid + pure-LQR on IDENTICAL scenarios in one
 # pass = the side-by-side demo; `ppo` records the pure-PPO policy alone.
 cmd_record() {
-  local mode="pair" num=2 level=60 friction="" seed=7
+  local mode="pair" num=2 level=60 friction="" seed=7 ckpt=""
   case "${1:-}" in
     hybrid|lqr|pair) mode="pair"; shift;;
     ppo)             mode="ppo";  shift;;
@@ -503,6 +503,7 @@ cmd_record() {
     --level)    level="${2:?}"; shift 2;;
     --friction) friction="${2:?}"; shift 2;;
     --seed)     seed="${2:?}"; shift 2;;
+    --ckpt)     ckpt="${2:?}"; shift 2;;   # pin a specific checkpoint (default = newest)
     *) err "unknown flag '$1'"; exit 1;;
   esac; done
   local used; used="$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')"
@@ -515,7 +516,7 @@ cmd_record() {
   out="$REPO/evals/demo_${mode}_${ts}.npz"; mkdir -p "$REPO/evals"
   say "record : ${b}$mode${x}   scenarios=$num  level=${level}%  friction=${friction:-1.0}  seed=$seed"
   "$LAUNCH" scripts/record_demo.py --mode "$mode" --num "$num" --level "$level" \
-      ${friction:+--friction "$friction"} --seed "$seed" --out "$out" \
+      ${friction:+--friction "$friction"} ${ckpt:+--checkpoint "$ckpt"} --seed "$seed" --out "$out" \
       || { err "recording failed"; exit 1; }
   # run_lab.sh can swallow python's exit code - trust the artifact, not the status
   [ -f "$out" ] || { err "recording failed (no $out - see the traceback above)"; exit 1; }
