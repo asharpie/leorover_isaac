@@ -77,9 +77,20 @@ parser.add_argument("--max_steps", type=int, default=0,
                     help="hard sim-step cap (0 = auto: enough for every scenario to finish once)")
 parser.add_argument("--out", default="", help="output CSV (default evals/paired/<mode>_<stamp>.csv)")
 
+parser.add_argument("--time-per-m", type=float, default=40.0,
+                    help="per-meter episode time budget (s/m). 40 gives every path the same "
+                         "per-meter allowance the 10 m training paths get (10 m x 40 = 400 s), "
+                         "so long zig-zags/polygons are never clock-killed while short paths "
+                         "are unchanged. 0 = the old single global cap.")
+
 # Friction is read at env-module import, so set it BEFORE anything imports the env.
 _pre_args, _ = parser.parse_known_args()
 os.environ["LEOROVER_FRICTION"] = str(_pre_args.friction)
+# Path-proportional budgets: exported before env import; the global cap becomes just a
+# ceiling for the longest paths. Respect pre-set values so users can still override.
+if _pre_args.time_per_m > 0:
+    os.environ.setdefault("LEOROVER_TIME_PER_M", str(_pre_args.time_per_m))
+    os.environ.setdefault("LEOROVER_EPISODE_S", "1600")
 
 try:
     from isaaclab.app import AppLauncher
@@ -258,7 +269,10 @@ def main():
     policy = runner.get_inference_policy(device=wrapped.unwrapped.device)
 
     # auto step cap: enough passes for every scenario to reset+finish once, with margin.
-    max_steps = args.max_steps if args.max_steps > 0 else int(np.ceil(S / args.num_envs) * 2400 + 4000)
+    # (loop exits early once all scenarios are logged, so this is only an upper bound;
+    # with path-proportional budgets the longest episodes can run up to 8000 steps.)
+    _per = 8000 if float(os.environ.get("LEOROVER_TIME_PER_M", "0")) > 0 else 2400
+    max_steps = args.max_steps if args.max_steps > 0 else int(np.ceil(S / args.num_envs) * _per + 8000)
     obs, _ = wrapped.get_observations()
     _mark(f"evaluating {S} scenarios (deterministic), step cap {max_steps}...")
     for t in range(max_steps):

@@ -80,7 +80,9 @@ ${b}EVALUATE${x}
   leo eval [--paths discrete|random] [--friction F] [--n N] [--levels ..] [--envs N]
                      THE eval: all 3 controllers over the IDENTICAL episodes (same path+terrain+
                      pose+friction) -> paired t-test / McNemar / Cohen's d. Defaults: 9 discrete
-                     geometries, 90k scenarios. --paths random = slope study. Usually just 'leo eval'.
+                     geometries, 90k scenarios, and PATH-PROPORTIONAL time budgets (40 s per
+                     meter of path = the training paths' allowance, so long geometries are
+                     never clock-killed). Usually just 'leo eval'.
   leo multieval [--worlds N] [--seedbase S] [--seeds a,b,..] [--n S] [--paths random|discrete]
                 [--fixed-friction F] [--pathbank N] [--envs N]
                      GENERALIZATION eval: the paired protocol repeated over MANY regenerated
@@ -163,7 +165,13 @@ cmd_compare() {
     [ -n "$f" ] && args+=("$a=$f")
   done
   [ ${#args[@]} -eq 0 ] && { err "no eval CSVs in $d - run 'leo eval <algo>' first"; exit 1; }
-  say "comparing latest eval of: $(for _a in "${args[@]}"; do echo -n "${_a%%=*} "; done)"
+  # SHOW exactly which files (and how old) this compares - stale-CSV scares happened
+  # repeatedly when "latest" was silently days old or from a different world/seed.
+  say "comparing these files (check the dates - is this the run you think it is?):"
+  local _a _f
+  for _a in "${args[@]}"; do _f="${_a#*=}"
+    echo "    ${_a%%=*}: $(basename "$_f")   ($(date -r "$_f" '+%Y-%m-%d %H:%M'))"
+  done
   python3 "$REPO/scripts/eval_report.py" "${args[@]}"
 }
 

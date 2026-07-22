@@ -310,6 +310,19 @@ class LeoRoverBaseEnv(DirectRLEnv):
         self._stagnation = torch.zeros(n, dtype=torch.long, device=dev)
         self._recovery_sustain = torch.zeros(n, dtype=torch.long, device=dev)
         self._sim_time = torch.zeros(n, device=dev)
+        # PATH-PROPORTIONAL TIME BUDGETS (2026-07-21): with LEOROVER_TIME_PER_M > 0,
+        # each episode's timeout is time_per_m * path_length instead of one global cap,
+        # so long discrete geometries (zig-zags, polygons) get the same per-meter
+        # allowance the 10 m training paths get (40 s/m * 10 m = 400 s = the old cap ->
+        # training and random-path evals are BIT-IDENTICAL; only longer paths gain time).
+        # A clean-but-slow rover is never clock-killed; the stagnation check still
+        # removes truly stuck ones. Default 0 = off (the pre-existing global cap).
+        self._time_per_m = max(0.0, float(_os.environ.get("LEOROVER_TIME_PER_M", "0")))
+        self._time_budget_max = float(_os.environ.get("LEOROVER_TIME_BUDGET_MAX", "1600"))
+        self._time_budget = torch.full((n,), float(self.cfg.episode_length_s), device=dev)
+        if self._time_per_m > 0.0:
+            print(f"[episode] path-proportional budgets: {self._time_per_m:.0f} s/m "
+                  f"(ceiling {self._time_budget_max:.0f} s)", flush=True)
 
         # Per-env terrain/friction intensity (for logging + ADR).
         self._terrain_intensity = torch.zeros(n, device=dev)
@@ -1014,7 +1027,9 @@ class LeoRoverBaseEnv(DirectRLEnv):
         return self._stagnation > self._res['stagnation_termination_steps']
 
     def _is_out_of_time(self):
-        return self._sim_time > self.cfg.episode_length_s
+        # per-env budget; equals cfg.episode_length_s everywhere unless the
+        # path-proportional budgets are active (LEOROVER_TIME_PER_M).
+        return self._sim_time > self._time_budget
 
     # ------------------------------------------------- per-step bookkeeping
     def _update_waypoint_skip(self):
@@ -1269,6 +1284,9 @@ class LeoRoverBaseEnv(DirectRLEnv):
             self._total_len[e] = entry["total"]
             self._goal_xy[e] = torch.from_numpy(entry["goal"]).to(dev)
             self._path_ext[e] = torch.from_numpy(entry["ext"]).to(dev)
+            if self._time_per_m > 0.0:
+                self._time_budget[e] = min(max(self._time_per_m * float(entry["total"]),
+                                               60.0), self._time_budget_max)
             wp2 = self._wps[e, :K, :2]
             dist0 = torch.norm(wp2, dim=-1)
             found = torch.nonzero(dist0 >= 0.5, as_tuple=False)
