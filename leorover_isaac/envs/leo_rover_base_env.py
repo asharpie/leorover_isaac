@@ -894,6 +894,28 @@ class LeoRoverBaseEnv(DirectRLEnv):
         prog_delta = (progress - self._prev_progress) / 100.0
         self._prev_progress = progress
         r_prog = w['ppo_w_progress'] * prog_delta
+        # CORRIDOR-GATED PROGRESS (2026-07-22, strongest-baseline fix): a progress term
+        # paid regardless of lateral offset admits a SHORTCUT optimum for the unanchored
+        # pure-PPO policy (measured: it beelines between waypoints - 0.137 m MCTE, lowest
+        # slip of all three controllers, 0.0% zig-zag completion - i.e. it optimizes
+        # progress while relaxing the path constraint). The standard path-following
+        # remedy is to credit progress only inside a tracking corridor:
+        #   r_prog *= exp(-(cte/sigma)^2)
+        # Sigma 0.20 m keeps the corridor generous (78% credit at 0.10 m off-path, 37%
+        # at 0.20, 10% at 0.30) so early exploration still finds gradient, while a
+        # persistent 0.3+ m shortcut earns nothing. DEFAULT: ON for pure PPO, OFF for
+        # the hybrid (the LQR anchor already prevents shortcutting, and the published
+        # hybrid recipe stays frozen). Override: LEOROVER_PROG_GATE_SIGMA (m; 0 = off).
+        if not hasattr(self, "_prog_gate_sigma"):
+            import os as _os_pg
+            _def = "0.0" if self.cfg.use_lqr_baseline else "0.20"
+            self._prog_gate_sigma = max(0.0, float(
+                _os_pg.environ.get("LEOROVER_PROG_GATE_SIGMA", _def)))
+            if self._prog_gate_sigma > 0.0:
+                print(f"[reward] corridor-gated progress: sigma = "
+                      f"{self._prog_gate_sigma:.2f} m (anti-shortcut)", flush=True)
+        if self._prog_gate_sigma > 0.0:
+            r_prog = r_prog * torch.exp(-(cte / self._prog_gate_sigma) ** 2)
 
         if self.cfg.use_lqr_baseline and w['ppo_w_effort'] > 0.0:
             mv = max(cfg_mod.MAX_RESIDUAL_VELOCITY, 1e-6)
