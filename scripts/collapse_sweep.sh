@@ -37,11 +37,11 @@ for H in "${HLIST[@]}"; do
   export LEOROVER_SOIL_KDIG=$(awk -v h="$H" 'BEGIN{printf "%.4f", 0.50*h}')
   export LEOROVER_SOIL_KREC=$(awk -v h="$H" 'BEGIN{printf "%.4f", 0.25/h}')
 
-  before=$(ls -1dt evals/*/ 2>/dev/null | head -1 || true)
+  before=$(ls -1dt evals/paired/*/ 2>/dev/null | head -1 || true)
   echo ""
   echo "[collapse] ===== H=${H}  AMP=${AMP}  CSINK=${LEOROVER_SOIL_CSINK} CSLIP=${LEOROVER_SOIL_CSLIP} ====="
   bash scripts/leo.sh eval --n "$NSCEN"
-  after=$(ls -1dt evals/*/ 2>/dev/null | head -1 || true)
+  after=$(ls -1dt evals/paired/*/ 2>/dev/null | head -1 || true)
 
   if [ -n "$after" ] && [ "$after" != "$before" ] && [ -f "${after}/hybrid.csv" ] && [ -f "${after}/lqr.csv" ]; then
     echo "$H  ${after%/}  $AMP" >> "$manifest"
