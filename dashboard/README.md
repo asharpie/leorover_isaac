@@ -68,3 +68,14 @@ No terminals needed. In `dashboard/windows/`:
 Requirements: UA VPN connected, and Windows' built-in OpenSSH client
 (present by default on Windows 10/11). Clicking it again when everything
 is already running just reopens the window — it never starts duplicates.
+
+## Watching episodes in 3D
+
+Mission Control -> "Watch episodes". Recordings are ground truth: the recorder
+samples the running simulation (pose 5x/s, wheel angles, terrain raycast,
+actual waypoints), and the viewer renders the real Leo Rover model (converted
+from the original ROS meshes) on the real terrain with slip-coloured trails.
+Record from the same page (GPU must be free), then "Watch" opens the viewer:
+drag to orbit, follow/chase cameras, scrub, speed control. Hybrid (red flag)
+and pure LQR (blue flag) replay the same scenario simultaneously; they overlap
+until their behaviour diverges - that divergence is the point.

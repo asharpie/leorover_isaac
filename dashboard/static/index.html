@@ -102,6 +102,7 @@ pre.report{background:#fbfaf7;border:1px solid var(--line);border-radius:8px;pad
     <button data-v="runs">🗂 Runs &amp; checkpoints</button>
     <button data-v="train">📈 Training analysis</button>
     <button data-v="evals">⚖ Evaluations</button>
+    <button data-v="watch">🎬 Watch episodes</button>
     <div class="sect">Data</div>
     <button data-v="explore">🔍 Data explorer</button>
     <button data-v="files">📁 Files</button>
@@ -253,6 +254,40 @@ pre.report{background:#fbfaf7;border:1px solid var(--line);border-radius:8px;pad
     <div id="ev-body"></div>
   </section>
 
+  <!-- ============ WATCH ============ -->
+  <section class="view" id="v-watch">
+    <div class="note info">Replays are <b>ground truth</b>: the recorder samples the actual simulation — exact rover pose 5×/s, exact wheel angles, the terrain raycast straight from the physics scene, and the very waypoints the controller tracked. The viewer shows the real Leo Rover model with spinning wheels, slip-coloured trails, and free orbit / chase cameras. Hybrid (red) and pure LQR (blue) drive the <b>same</b> scenario so you can watch exactly where the residual earns its keep.</div>
+    <div class="two">
+      <div class="card">
+        <h3>Recorded episodes</h3>
+        <div class="sub">Every .npz demo found under <code>evals/</code>. Click Watch — opens the 3-D viewer in its own tab.</div>
+        <div id="watch-list"></div>
+      </div>
+      <div class="card">
+        <h3>Record a new episode</h3>
+        <div class="sub">Runs the newest checkpoint (or one you pin) on fresh scenarios and records everything. Takes a few minutes on the lab box; the GPU must be free. When it finishes, the recording appears in the list — hit refresh.</div>
+        <label class="f">What to record</label>
+        <select id="w-mode"><option value="pair">pair — hybrid &amp; pure LQR, same scenario (recommended)</option><option value="ppo">pure PPO only</option></select>
+        <div class="row">
+          <div style="min-width:100px"><label class="f">Scenarios</label><input type="text" id="w-num" value="2"></div>
+          <div style="min-width:100px"><label class="f">Terrain %</label><input type="text" id="w-level" value="60"></div>
+          <div style="min-width:100px"><label class="f">Seed</label><input type="text" id="w-seed" value="7"></div>
+          <div style="min-width:100px"><label class="f">Friction</label><input type="text" id="w-friction" value="1.0"></div>
+        </div>
+        <div class="row">
+          <div style="min-width:120px"><label class="f">Terrain detail <span class="hint">(grid)</span></label><input type="text" id="w-grid" value="161"></div>
+          <div style="min-width:120px"><label class="f">Extent (m)</label><input type="text" id="w-extent" value="8"></div>
+          <div style="min-width:120px"><label class="f">Max steps</label><input type="text" id="w-steps" value="2400"></div>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn" onclick="watchRecord()">⏺ Record</button>
+          <button class="btn sec" onclick="renderWatch()">↻ Refresh list</button>
+        </div>
+        <div id="watch-result" style="font-size:12.5px;margin-top:10px"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ EXPLORER ============ -->
   <section class="view" id="v-explore">
     <div class="card" style="margin-bottom:14px">
@@ -341,13 +376,13 @@ function dlText(el,name){const b=new Blob([$(el).textContent],{type:"text/plain"
 $("papermode").onchange=e=>{paper=e.target.checked;toast(paper?"Paper mode: white/serif styling + 4× export resolution":"Screen styling restored");refreshCurrentView();};
 
 /* ---------- navigation ---------- */
-const TITLES={overview:"Overview",launch:"Launch",live:"Live training",runs:"Runs & checkpoints",train:"Training analysis",evals:"Evaluations",explore:"Data explorer",files:"Files",help:"Help & glossary"};
+const TITLES={overview:"Overview",launch:"Launch",live:"Live training",runs:"Runs & checkpoints",train:"Training analysis",evals:"Evaluations",watch:"Watch episodes",explore:"Data explorer",files:"Files",help:"Help & glossary"};
 let curView="overview";
 document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>showView(b.dataset.v));
 function showView(v){curView=v;document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===v));
   document.querySelectorAll(".view").forEach(s=>s.classList.toggle("active",s.id==="v-"+v));
   $("viewtitle").textContent=TITLES[v]||v; refreshCurrentView();}
-function refreshCurrentView(){({overview:renderOverview,live:()=>loadLive(false),runs:renderRuns,train:()=>{},evals:renderEvalTab,explore:()=>{},files:()=>{},help:renderHelp}[curView]||(()=>{}))();}
+function refreshCurrentView(){({overview:renderOverview,live:()=>loadLive(false),runs:renderRuns,train:()=>{},evals:renderEvalTab,watch:renderWatch,explore:()=>{},files:()=>{},help:renderHelp}[curView]||(()=>{}))();}
 
 /* ================= status polling ================= */
 async function poll(){try{
@@ -740,6 +775,30 @@ async function loadCollapse(){const m=$("cl-man").value;
       annotations:[{xref:"paper",x:.99,y:5,text:"5% collapse line",showarrow:false,font:{size:10,color:"#777"},yanchor:"bottom"}]});
     plot("c-cl-cte",mk("_cte"),{xaxis:{title:"harshness multiplier H"},yaxis:{title:"mean CTE (m)"}});
   }catch(e){toast(e.message);}}
+
+/* ================= WATCH ================= */
+async function renderWatch(){
+  EVALS=await api("/api/evals");
+  const rs=EVALS.replays||[];
+  $("watch-list").innerHTML=rs.length?`<table class="t"><tr><th>recording</th><th>when</th><th>size</th><th></th></tr>`+
+    rs.map(r=>`<tr><td><code>${esc(r.name)}</code></td><td>${esc(r.mtime)}</td><td>${esc(r.size)}</td>
+    <td><a class="btn small" href="/static/replay.html?npz=${encodeURIComponent(r.path)}" target="_blank">▶ Watch</a></td></tr>`).join("")+`</table>`
+    :`<div class="empty">No recordings yet. Record one on the right — or run <code>leo record</code> in a terminal.</div>`;}
+async function watchRecord(){
+  const o={kind:"record",really:true,mode:$("w-mode").value,num:$("w-num").value,level:$("w-level").value,
+           seed:$("w-seed").value,friction:$("w-friction").value,grid:$("w-grid").value,
+           extent:$("w-extent").value,steps:$("w-steps").value,env:{}};
+  try{const r=await api("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
+    if(r.need_force){
+      if(confirm(r.error+"\n\nRecording needs the GPU. Launch anyway?"))
+        {o.force=true;const r2=await api("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
+         showRecResult(r2);return;}
+      $("watch-result").innerHTML=`<span class="pill warn"><span class="dot"></span> not started</span> ${esc(r.error)}`;return;}
+    showRecResult(r);
+  }catch(e){toast(e.message);}}
+function showRecResult(r){
+  if(r.launched)$("watch-result").innerHTML=`<span class="pill ok"><span class="dot"></span> recording</span> takes a few minutes — <a style="cursor:pointer" onclick="openLog('${esc(r.log)}')">watch progress</a>, then hit “Refresh list”.`;
+  else $("watch-result").innerHTML=`<span class="pill warn"><span class="dot"></span> not started</span> ${esc(r.error||"copy the command from the Launch page")}`;}
 
 /* ================= EXPLORER ================= */
 let exState={path:null,meta:null,offset:0};

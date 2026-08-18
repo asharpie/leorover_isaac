@@ -44,6 +44,10 @@ try:
     import pandas as _pd  # optional accelerator
 except Exception:
     _pd = None
+try:
+    import numpy as _np  # needed only for the 3D replay (.npz demos)
+except Exception:
+    _np = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
@@ -337,6 +341,10 @@ def scan_evals():
                                 "mtime": _mtime_str(p), "size": _fsize(p)})
         for p in sorted(glob.glob(os.path.join(base, "demo_*.html")), key=os.path.getmtime, reverse=True):
             ev["demos"].append({"path": _rel(p), "name": os.path.basename(p), "mtime": _mtime_str(p)})
+        ev["replays"] = []
+        for p in sorted(glob.glob(os.path.join(base, "demo_*.npz")), key=os.path.getmtime, reverse=True):
+            ev["replays"].append({"path": _rel(p), "name": os.path.basename(p),
+                                  "mtime": _mtime_str(p), "size": _fsize(p)})
         for p in sorted(glob.glob(os.path.join(base, "collapse_manifest_*.txt")),
                         key=os.path.getmtime, reverse=True):
             ev["collapse"].append({"path": _rel(p), "name": os.path.basename(p), "mtime": _mtime_str(p)})
@@ -600,6 +608,35 @@ def collapse_plotdata(manifest):
 # launching
 # ----------------------------------------------------------------------------
 
+def demo_json(path):
+    """Parse a record_demo.py .npz into JSON for the 3D replay viewer."""
+    if _np is None:
+        raise ValueError("numpy is not installed on this machine (needed to read .npz demos)")
+    path = _safe(path)
+    z = _np.load(path, allow_pickle=False)
+    def rl(a, nd=3):
+        return _np.round(_np.asarray(a, dtype=float), nd).tolist()
+    meta = json.loads(str(z["meta"]))
+    out = {"meta": meta,
+           "origins": rl(z["origins"], 3),
+           "heights": rl(z["heights"], 3),
+           "soil": rl(z["soil"], 3),
+           "wps": rl(z["wps"], 3),
+           "nwp": _np.asarray(z["nwp"]).astype(int).tolist(),
+           "legs": {}}
+    for leg in ("hybrid", "lqr", "ppo"):
+        if (leg + "_pos") in z.files:
+            out["legs"][leg] = {
+                "pos": rl(z[leg + "_pos"], 4),
+                "quat": rl(z[leg + "_quat"], 5),
+                "wheels": rl(z[leg + "_wheels"], 3),
+                "slip": rl(z[leg + "_slip"], 4),
+                "cte": rl(z[leg + "_cte"], 4),
+                "done": _np.asarray(z[leg + "_done"]).astype(int).tolist(),
+            }
+    return out
+
+
 def can_launch():
     return os.path.isfile(os.path.join(REPO, "scripts", "run_lab.sh")) and \
         shutil.which("nvidia-smi") is not None
@@ -664,9 +701,15 @@ def build_command(kind, opts):
         return cmd, env, "bg"
     if kind == "record":
         mode = opts.get("mode", "pair")
-        cmd = "%s record %s" % (leo, shlex.quote(mode))
+        if mode not in ("pair", "ppo"):
+            raise ValueError("bad mode")
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        outp = "evals/demo_%s_%s.npz" % (mode, stamp)
+        cmd = "bash scripts/run_lab.sh scripts/record_demo.py --mode %s" % mode
         cmd += flag("--num", "num") + flag("--level", "level") + flag("--friction", "friction")
-        cmd += flag("--seed", "seed") + flag("--ckpt", "ckpt")
+        cmd += flag("--seed", "seed") + flag("--checkpoint", "ckpt") + flag("--steps", "steps")
+        cmd += flag("--grid", "grid") + flag("--extent", "extent")
+        cmd += " --out %s" % shlex.quote(outp)
         return cmd, env, "bg"
     if kind == "custom":
         c = str(opts.get("cmd", "")).strip()
@@ -947,6 +990,9 @@ class Handler(BaseHTTPRequestHandler):
                 rows = [[cols[c][i] for c in names] for i in sel]
                 return self._json({"columns": names, "rows": rows, "total": len(rows_all),
                                    "offset": off})
+            if p == "/api/demo":
+                return self._json(demo_json(os.path.join(REPO, q["path"])
+                                            if not os.path.isabs(q["path"]) else q["path"]))
             if p == "/api/paired":
                 return self._json(paired_plotdata(os.path.join(REPO, q["dir"])
                                                   if not os.path.isabs(q["dir"]) else q["dir"]))

@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Leo Rover — 3D Replay</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎬</text></svg>">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#1a120c;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:#eee}
+#c{position:absolute;inset:0}
+#hud{position:absolute;top:0;left:0;right:0;display:flex;gap:10px;align-items:center;padding:10px 14px;
+  background:linear-gradient(#000c,#0000);z-index:5;flex-wrap:wrap}
+#hud .box{background:#000a;border:1px solid #ffffff22;border-radius:8px;padding:6px 10px;font-size:12.5px;display:flex;gap:8px;align-items:center}
+button,select{background:#2b2016;color:#eee;border:1px solid #ffffff2b;border-radius:6px;padding:5px 10px;font-size:12.5px;cursor:pointer}
+button:hover{background:#3a2c1e}
+button.play{min-width:64px;font-weight:700}
+input[type=range]{accent-color:#e0754a;vertical-align:middle}
+#legend{position:absolute;left:14px;bottom:14px;background:#000a;border:1px solid #ffffff22;border-radius:8px;padding:10px 13px;font-size:12px;z-index:5;line-height:1.7}
+.sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+#stats{position:absolute;right:14px;bottom:14px;background:#000a;border:1px solid #ffffff22;border-radius:8px;padding:10px 13px;font-size:12px;z-index:5;min-width:210px}
+#stats table{border-collapse:collapse;width:100%} #stats td{padding:2px 6px 2px 0}
+#loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;background:#1a120c;z-index:50;font-size:15px}
+#loading .bar{width:280px;height:6px;background:#ffffff22;border-radius:4px;overflow:hidden}
+#loading .bar i{display:block;height:100%;width:0;background:#e0754a;transition:width .2s}
+#err{color:#ff9d8a;max-width:600px;text-align:center;padding:0 20px;line-height:1.5}
+kbd{background:#ffffff22;border-radius:4px;padding:0 5px;font-size:11px}
+</style>
+</head>
+<body>
+<div id="c"></div>
+<div id="hud">
+  <div class="box"><b style="letter-spacing:.3px">🎬 Leo Rover replay</b></div>
+  <div class="box">Scenario <select id="scen"></select></div>
+  <div class="box">
+    <button class="play" id="playbtn">▶ Play</button>
+    <button id="restart">⟲</button>
+    Speed <select id="speed"><option>0.5</option><option selected>1</option><option>2</option><option>4</option></select>×
+  </div>
+  <div class="box" style="flex:1;min-width:220px">
+    <input type="range" id="scrub" min="0" max="1000" value="0" style="width:100%">
+    <span id="tlabel" style="min-width:86px;text-align:right">t = 0.0 s</span>
+  </div>
+  <div class="box">Camera <select id="cam">
+    <option value="follow0" selected>follow hybrid (drag to orbit)</option>
+    <option value="chase0">chase cam</option>
+    <option value="follow1">follow LQR / 2nd</option>
+    <option value="orbit">free orbit</option>
+    <option value="top">top-down</option></select>
+  </div>
+  <div class="box"><label><input type="checkbox" id="trails" checked> slip trails</label>
+    <label style="margin-left:8px"><input type="checkbox" id="pathshow" checked> path</label></div>
+</div>
+<div id="legend">
+  <div><span class="sw" style="background:#EE6677"></span>hybrid (LQR + learned residual)</div>
+  <div id="leg-lqr"><span class="sw" style="background:#4477AA"></span>pure LQR — same scenario</div>
+  <div><span class="sw" style="background:linear-gradient(90deg,#3fae5a,#e33a2e)"></span>trail: grip → slip</div>
+  <div><span class="sw" style="background:#e8b45a"></span>reference path · <span style="color:#9ad">◆ waypoints</span> · 🏁 goal</div>
+  <div style="opacity:.75;margin-top:4px">drag = orbit · right-drag = pan · wheel = zoom</div>
+</div>
+<div id="stats"><table id="stattbl"></table></div>
+<div id="loading"><div>Loading replay…</div><div class="bar"><i id="lbar"></i></div><div id="err"></div></div>
+
+<script type="importmap">
+{"imports":{"three":"/static/vendor/three.module.js",
+"three/addons/":"/static/vendor/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+
+const Q = new URLSearchParams(location.search);
+const NPZ = Q.get('npz');
+const $ = id=>document.getElementById(id);
+const setBar=p=>$("lbar").style.width=(p*100)+"%";
+const fail=m=>{$("err").textContent=m;};
+
+if(!NPZ){fail("No demo specified. Open this page from Mission Control → Watch episodes.");throw new Error("no npz");}
+
+/* ---------- load data + models ---------- */
+setBar(.05);
+let D;
+try{
+  const r=await fetch('/api/demo?path='+encodeURIComponent(NPZ));
+  D=await r.json(); if(D.error)throw new Error(D.error);
+}catch(e){fail("Couldn't load the demo: "+e.message);throw e;}
+setBar(.35);
+
+const loader=new GLTFLoader();
+const load=u=>new Promise((res,rej)=>loader.load(u,g=>res(g.scene),undefined,rej));
+let chassisM,rockerM,wheelAM,wheelBM;
+try{
+  [chassisM,rockerM,wheelAM,wheelBM]=await Promise.all(
+    ['chassis','rocker','wheelA','wheelB'].map(n=>load('/static/rover/'+n+'.glb')));
+}catch(e){fail("Couldn't load the rover model files (dashboard/static/rover/*.glb): "+e);throw e;}
+setBar(.7);
+
+/* ---------- scene ---------- */
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.05;
+$("c").appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0xc98a5e);          // dusty martian sky
+scene.fog=new THREE.Fog(0xc98a5e,30,120);
+const camera=new THREE.PerspectiveCamera(52,innerWidth/innerHeight,0.05,500);
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enableDamping=true;controls.dampingFactor=.08;controls.maxPolarAngle=Math.PI*0.495;
+
+scene.add(new THREE.HemisphereLight(0xffe4c8,0x6b4530,0.75));
+const sun=new THREE.DirectionalLight(0xfff1de,2.1);
+sun.position.set(18,10,26);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-14;sun.shadow.camera.right=14;
+sun.shadow.camera.top=14;sun.shadow.camera.bottom=-14;
+sun.shadow.bias=-0.0006;
+scene.add(sun);
+
+/* NOTE ON AXES: sim data is Z-up; three.js is Y-up.
+   We keep everything in a Z-up group and rotate the group -90° about X. */
+const world=new THREE.Group();
+world.rotation.x=-Math.PI/2;
+scene.add(world);
+
+const K=D.origins.length;
+const G=D.heights[0].length;
+const meta=D.meta||{};
+const half=(meta.extent||8.0);
+const dt=meta.dt||0.2;
+const legs=Object.keys(D.legs);
+const LEGCOL={hybrid:0xEE6677,lqr:0x4477AA,ppo:0x55BB66};
+if(!D.legs.lqr)$("leg-lqr").style.display="none";
+
+/* ---------- terrain (accurate: raycast heights from the sim) ---------- */
+const marsTex=await new Promise(res=>{
+  new THREE.TextureLoader().load('/api/file?path='+encodeURIComponent('leorover_isaac/assets/leo_rover/source/MarsTexture.png'),
+    t=>{t.wrapS=t.wrapT=THREE.RepeatWrapping;t.repeat.set(6,6);t.colorSpace=THREE.SRGBColorSpace;res(t);},undefined,()=>res(null));});
+setBar(.85);
+
+function buildTerrain(e){
+  const geo=new THREE.PlaneGeometry(half*2,half*2,G-1,G-1); // XY plane in Z-up world
+  const pos=geo.attributes.position;
+  const colors=new Float32Array(pos.count*3);
+  const H=D.heights[e],S=D.soil[e],oz=0; // heights are world z; we subtract origin z for local
+  const o=D.origins[e];
+  let hmin=1e9,hmax=-1e9;
+  for(const row of H)for(const v of row){if(v<hmin)hmin=v;if(v>hmax)hmax=v;}
+  for(let i=0;i<pos.count;i++){
+    const ix=i%G, iy=Math.floor(i/G);
+    // PlaneGeometry rows go +y→-y; height grid row 0 = -half…: map carefully
+    const gx=ix, gy=G-1-iy;
+    const h=H[gy][gx]-o[2];
+    pos.setZ(i,h);
+    const soil=S[gy][gx];               // 0 firm … 1 soft sand
+    const t=(H[gy][gx]-hmin)/Math.max(hmax-hmin,1e-6);
+    // base rock color modulated by elevation; soft sand brighter + warmer
+    const r=0.52+0.20*t+0.22*soil, g=0.33+0.13*t+0.14*soil, b=0.22+0.08*t+0.06*soil;
+    colors[i*3]=r;colors[i*3+1]=g;colors[i*3+2]=b;
+  }
+  geo.setAttribute('color',new THREE.BufferAttribute(colors,3));
+  geo.computeVertexNormals();
+  const mat=new THREE.MeshStandardMaterial({map:marsTex||null,vertexColors:true,roughness:.96,metalness:0});
+  const m=new THREE.Mesh(geo,mat);
+  m.receiveShadow=true;
+  return m;
+}
+
+/* ---------- rover assembly from the real URDF numbers ---------- */
+function tuneMats(root,shadow=true){root.traverse(o=>{if(o.isMesh){o.castShadow=shadow;o.receiveShadow=false;
+  if(o.material){o.material.roughness=Math.min(0.95,(o.material.roughness??0.8));o.material.metalness=Math.min(0.25,(o.material.metalness??0));}}});}
+function buildRover(tint){
+  // URDF (Z-up): base_link → rocker_L (yaw π @ [0.00263,0.14167,-0.04731]) → wheels FL/RL
+  //                        → rocker_R (      @ [0.00263,-0.14167,-0.04731]) → wheels FR/RR
+  const root=new THREE.Group();
+  const chassis=chassisM.clone(true);tuneMats(chassis);
+  chassis.position.set(-0.019662,0.011643,-0.031802);
+  root.add(chassis);
+  function rocker(sign){ // sign +1 = left (yaw π), -1 = right
+    const g=new THREE.Group();
+    g.position.set(0.00263,sign*0.14167,-0.04731);
+    if(sign>0)g.rotation.z=Math.PI;
+    const mesh=rockerM.clone(true);tuneMats(mesh);
+    mesh.position.set(0,0.01346,-0.06506);
+    g.add(mesh);
+    return g;
+  }
+  const rl=rocker(1),rr=rocker(-1);
+  root.add(rl,rr);
+  function wheel(parent,x,mesh){
+    const g=new THREE.Group();
+    g.position.set(x,-0.08214,-0.08802);
+    const m=mesh.clone(true);tuneMats(m);
+    m.position.set(0,0.030026,0);
+    g.add(m);
+    parent.add(g);
+    return g;
+  }
+  // in each rocker frame: front wheel at x=-0.15256 for LEFT (frame yawed π) etc.
+  const wFL=wheel(rl,-0.15256,wheelAM), wRL=wheel(rl,0.15256,wheelAM);
+  const wFR=wheel(rr,0.15256,wheelBM),  wRR=wheel(rr,-0.15256,wheelBM);
+  // small team-color flag so you can tell rovers apart at distance
+  const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.004,0.004,0.26),new THREE.MeshStandardMaterial({color:0x222222}));
+  pole.rotation.x=Math.PI/2;pole.position.set(-0.12,0,0.16);root.add(pole);
+  const flag=new THREE.Mesh(new THREE.PlaneGeometry(0.09,0.05),new THREE.MeshBasicMaterial({color:tint,side:THREE.DoubleSide}));
+  flag.rotation.x=Math.PI/2;flag.position.set(-0.075,0,0.27);root.add(flag);
+  // recorded joint order = [FL, RL, FR, RR]; axes: left (0,-1,0), right (0,1,0) in link frames
+  return {root,wheels:[wFL,wRL,wFR,wRR],axisSign:[-1,-1,1,1]};
+}
+
+/* ---------- per-scenario state ---------- */
+let terrain=null,pathGroup=null,rovers={},trails={};
+const T=Math.max(...legs.map(l=>D.legs[l].pos.length));
+let scenIdx=0,frame=0,playing=true,speed=1,acc=0;
+
+function slipColor(s){const t=Math.min(1,Math.max(0,s));return new THREE.Color().setRGB(0.25+0.64*t,0.68-0.45*t,0.35-0.17*t);}
+
+function buildScenario(e){
+  if(terrain)world.remove(terrain);
+  if(pathGroup)world.remove(pathGroup);
+  for(const l in rovers)world.remove(rovers[l].root);
+  for(const l in trails)world.remove(trails[l].line);
+  rovers={};trails={};
+  terrain=buildTerrain(e);world.add(terrain);
+  const o=D.origins[e];
+  // path (accurate: the actual waypoint list the controller tracked)
+  pathGroup=new THREE.Group();
+  const n=D.nwp[e];
+  const pts=[];
+  for(let i=0;i<n;i++){
+    const x=D.wps[e][i][0],y=D.wps[e][i][1];
+    const z=terrainZ(e,x,y)+0.03;
+    pts.push(new THREE.Vector3(x,y,z));
+  }
+  if(pts.length>1){
+    const line=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({color:0xe8b45a,linewidth:2}));
+    pathGroup.add(line);
+    const wpGeo=new THREE.SphereGeometry(0.035,10,10);
+    const wpMat=new THREE.MeshBasicMaterial({color:0x99aadd});
+    for(const p of pts){const s=new THREE.Mesh(wpGeo,wpMat);s.position.copy(p);pathGroup.add(s);}
+    // goal flag
+    const gp=pts[pts.length-1];
+    const gpole=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.55),new THREE.MeshStandardMaterial({color:0xdddddd}));
+    gpole.rotation.x=Math.PI/2;gpole.position.set(gp.x,gp.y,gp.z+0.27);pathGroup.add(gpole);
+    const gflag=new THREE.Mesh(new THREE.PlaneGeometry(0.22,0.14),new THREE.MeshBasicMaterial({color:0x1db954,side:THREE.DoubleSide}));
+    gflag.rotation.x=Math.PI/2;gflag.position.set(gp.x+0.11,gp.y,gp.z+0.48);pathGroup.add(gflag);
+  }
+  world.add(pathGroup);
+  // rovers + trails
+  for(const l of legs){
+    const rv=buildRover(LEGCOL[l]||0xffffff);
+    world.add(rv.root);rovers[l]=rv;
+    const maxP=D.legs[l].pos.length;
+    const tp=new Float32Array(maxP*3),tc=new Float32Array(maxP*3);
+    const tg=new THREE.BufferGeometry();
+    tg.setAttribute('position',new THREE.BufferAttribute(tp,3));
+    tg.setAttribute('color',new THREE.BufferAttribute(tc,3));
+    tg.setDrawRange(0,0);
+    const line=new THREE.Line(tg,new THREE.LineBasicMaterial({vertexColors:true}));
+    world.add(line);
+    trails[l]={geo:tg,pos:tp,col:tc,line};
+  }
+  frame=0;$("scrub").value=0;
+  // aim camera at the start
+  const s0=D.legs[legs[0]].pos[0][e];
+  const cx=s0[0]-o[0],cy=s0[1]-o[1],cz=s0[2]-o[2];
+  const v=new THREE.Vector3(cx,cy,cz).applyAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2);
+  controls.target.copy(v);
+  camera.position.set(v.x+2.2,v.y+1.6,v.z+2.6);
+}
+function terrainZ(e,x,y){ // bilinear sample of the height grid (local coords)
+  const H=D.heights[e],o=D.origins[e];
+  const fx=( x+half)/(2*half)*(G-1), fy=(y+half)/(2*half)*(G-1);
+  const x0=Math.max(0,Math.min(G-2,Math.floor(fx))),y0=Math.max(0,Math.min(G-2,Math.floor(fy)));
+  const ax=fx-x0,ay=fy-y0;
+  const h=(1-ax)*(1-ay)*H[y0][x0]+ax*(1-ay)*H[y0][x0+1]+(1-ax)*ay*H[y0+1][x0]+ax*ay*H[y0+1][x0+1];
+  return h-o[2];
+}
+
+/* ---------- playback ---------- */
+const qtmp=new THREE.Quaternion();
+function setFrame(f){
+  frame=Math.max(0,Math.min(T-1,f));
+  const e=scenIdx,o=D.origins[e];
+  let rows="";
+  for(const l of legs){
+    const L=D.legs[l],rv=rovers[l];
+    const fi=Math.min(frame,L.pos.length-1);
+    const done=L.done[e]>=0&&fi>=L.done[e];
+    const p=L.pos[fi][e],q=L.quat[fi][e];
+    rv.root.position.set(p[0]-o[0],p[1]-o[1],p[2]-o[2]);
+    qtmp.set(q[1],q[2],q[3],q[0]);   // isaac (w,x,y,z) -> three (x,y,z,w)
+    rv.root.quaternion.copy(qtmp);
+    const wh=L.wheels[fi][e];
+    for(let i=0;i<4;i++)rv.wheels[i].rotation.y=rv.axisSign[i]*wh[i];
+    rv.root.visible=!(done&&frame>L.done[e]+10);
+    // trail
+    const tr=trails[l];
+    if(fi>0){
+      for(let i=0;i<=fi;i++){
+        const pp=L.pos[i][e];
+        tr.pos[i*3]=pp[0]-o[0];tr.pos[i*3+1]=pp[1]-o[1];tr.pos[i*3+2]=pp[2]-o[2]+0.015;
+        const c=slipColor(L.slip[i][e]);
+        tr.col[i*3]=c.r;tr.col[i*3+1]=c.g;tr.col[i*3+2]=c.b;
+      }
+      tr.geo.setDrawRange(0,fi+1);
+      tr.geo.attributes.position.needsUpdate=true;
+      tr.geo.attributes.color.needsUpdate=true;
+    }
+    tr.line.visible=$("trails").checked;
+    rows+=`<tr><td><span class="sw" style="background:#${(LEGCOL[l]||0xffffff).toString(16).padStart(6,"0")}"></span>${l}</td>
+      <td>CTE ${L.cte[fi][e].toFixed(2)} m</td><td>slip ${(100*L.slip[fi][e]).toFixed(0)}%</td>
+      <td>${done?"■ finished":""}</td></tr>`;
+  }
+  pathGroup.visible=$("pathshow").checked;
+  $("stattbl").innerHTML=rows;
+  $("tlabel").textContent="t = "+(frame*dt).toFixed(1)+" s";
+  $("scrub").value=Math.round(1000*frame/(T-1));
+}
+
+/* camera modes */
+function applyCam(){
+  const mode=$("cam").value;
+  if(mode==="top"){const t=controls.target;camera.position.set(t.x,25,t.z);controls.update();return;}
+  if(mode.startsWith("follow")||mode.startsWith("chase")){
+    const li=+mode.slice(-1),l=legs[Math.min(li,legs.length-1)];
+    const rv=rovers[l];if(!rv)return;
+    const wp=new THREE.Vector3();rv.root.getWorldPosition(wp);
+    controls.target.lerp(wp,0.12);
+    if(mode.startsWith("chase")){
+      const back=new THREE.Vector3(-1.6,0,0).applyQuaternion(rv.root.quaternion);
+      const bw=back.clone().applyAxisAngle(new THREE.Vector3(1,0,0),-Math.PI/2);
+      const goal=wp.clone().add(bw).add(new THREE.Vector3(0,0.9,0));
+      camera.position.lerp(goal,0.06);
+    }
+  }
+}
+
+/* ---------- UI wiring ---------- */
+for(let e=0;e<K;e++){const o=document.createElement("option");o.value=e;o.textContent="scenario "+(e+1)+" of "+K;$("scen").appendChild(o);}
+$("scen").onchange=e=>{scenIdx=+e.target.value;buildScenario(scenIdx);setFrame(0);};
+$("playbtn").onclick=()=>{playing=!playing;$("playbtn").textContent=playing?"❚❚ Pause":"▶ Play";};
+$("restart").onclick=()=>setFrame(0);
+$("speed").onchange=e=>speed=+e.target.value;
+$("scrub").oninput=e=>{playing=false;$("playbtn").textContent="▶ Play";setFrame(Math.round(+e.target.value/1000*(T-1)));};
+addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+addEventListener("keydown",ev=>{if(ev.code==="Space"){ev.preventDefault();$("playbtn").click();}});
+
+buildScenario(0);setFrame(0);
+$("loading").style.display="none";
+
+let last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const el=(now-last)/1000;last=now;
+  if(playing){acc+=el*speed;while(acc>=dt){acc-=dt;if(frame<T-1)setFrame(frame+1);else{playing=false;$("playbtn").textContent="▶ Play";}}}
+  applyCam();
+  controls.update();
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
