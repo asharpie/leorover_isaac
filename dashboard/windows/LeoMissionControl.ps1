@@ -1,8 +1,8 @@
-# Leo Mission Control — one-click Windows launcher
+﻿# Leo Mission Control - one-click Windows launcher
 # Double-click "Leo Mission Control.bat" (or the desktop shortcut) instead of
 # running this directly. What it does, silently:
 #   1. First run only: creates an SSH key and installs it on the lab box
-#      (you type the lab password once — never again after that).
+#      (you type the lab password once - never again after that).
 #   2. Makes sure the dashboard server is running on the lab box.
 #   3. Opens a background SSH tunnel (no terminal window).
 #   4. Opens the dashboard as its own app window (Edge/Chrome), or a browser tab.
@@ -46,7 +46,7 @@ if (-not (Test-Path $Key)) {
         Remove-Item $Key, "$Key.pub" -ErrorAction SilentlyContinue
         Show-Msg "Couldn't reach the lab box to install the key.`n`nCheck that the UA VPN is connected, then double-click again."; exit 1 }
     ssh -i $Key -o BatchMode=yes -o ConnectTimeout=8 $LabHost "true"
-    if ($LASTEXITCODE -ne 0) { Show-Msg "Key installed but passwordless login failed — run this again; if it persists, tell Claude."; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Show-Msg "Key installed but passwordless login failed - run this again; if it persists, tell Claude."; exit 1 }
     Write-Host "Setup complete. From now on it's a single silent double-click."
     Start-Sleep 1
 }

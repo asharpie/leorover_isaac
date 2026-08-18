@@ -6,7 +6,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
  "$s.WorkingDirectory='%~dp0';" ^
  "$s.WindowStyle=7;" ^
  "$s.IconLocation='%%SystemRoot%%\System32\shell32.dll,18';" ^
- "$s.Description='Leo rover dashboard — starts everything and opens the app';" ^
+ "$s.Description='Leo rover dashboard - starts everything and opens the app';" ^
  "$s.Save()"
 echo Desktop shortcut created. Double-click "Leo Mission Control" on your Desktop.
 pause
