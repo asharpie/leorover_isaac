@@ -366,10 +366,19 @@ def gpu_status():
     procs = []
     rc2, out2, _ = _run(["nvidia-smi", "--query-compute-apps=pid,used_memory,process_name",
                          "--format=csv,noheader"], timeout=8)
+    me = os.environ.get("USER") or os.environ.get("USERNAME") or ""
     if rc2 == 0:
         for ln in out2.strip().splitlines():
-            if ln.strip():
-                procs.append(ln.strip())
+            parts = [x.strip() for x in ln.split(",")]
+            if len(parts) < 3:
+                continue
+            pid, mem, name = parts[0], parts[1], ",".join(parts[2:])
+            owner = ""
+            rc3, out3, _ = _run(["bash", "-c", "ps -o user= -p %s 2>/dev/null" % shlex.quote(pid)], timeout=4)
+            if rc3 == 0:
+                owner = out3.strip()
+            procs.append({"pid": pid, "mem": mem, "name": name, "owner": owner,
+                          "mine": bool(owner) and owner == me})
     return gpu, procs
 
 

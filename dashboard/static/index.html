@@ -370,7 +370,10 @@ function renderOverview(){if(!STATUS)return;
   cards+=`<div class="card"><h3>Machine</h3><div class="sub">where this dashboard is running</div><div class="kpi" style="font-size:18px">${esc(s.host)}</div>
     <div style="font-size:12px;color:var(--muted);margin-top:6px">${s.can_launch?"GPU + Isaac launcher found — you can start runs from the Launch page.":"No GPU/launcher here — browsing & analysis only; the Launch page will hand you copy-paste commands."}</div></div>`;
   cards+=s.gpu?`<div class="card"><h3>GPU memory</h3><div class="sub">jobs need ~11 GB; be kind to labmates</div><div class="kpi">${(s.gpu.mem_used/1024).toFixed(1)} <small>/ ${(s.gpu.mem_total/1024).toFixed(0)} GB · util ${s.gpu.util|0}%</small></div>
-    <div style="font-size:11.5px;color:var(--muted);margin-top:6px">${s.gpu_procs.length?esc(s.gpu_procs.join("; ")):"no compute processes"}</div></div>`
+    ${s.gpu_procs.length?`<table class="t" style="margin-top:8px"><tr><th>who</th><th>pid</th><th>memory</th><th>process</th></tr>`+
+      s.gpu_procs.map(p=>`<tr${p.mine?' style="background:#fbf3ee"':''}><td>${p.mine?'<span class="pill ok" style="font-size:10px"><span class="dot"></span> you</span>':esc(p.owner||"?")}</td><td>${esc(p.pid)}</td><td>${esc(p.mem)}</td><td style="font-family:var(--mono);font-size:10.5px">${esc((p.name||"").split("/").pop().slice(0,42))}</td></tr>`).join("")+`</table>
+      <div style="font-size:11px;color:var(--muted);margin-top:5px">Rows marked <b>you</b> can be stopped from “Running processes” →. Anyone else's job: wait or coordinate — never kill it.</div>`
+      :`<div style="font-size:11.5px;color:var(--muted);margin-top:6px">no compute processes — the card is free</div>`}</div>`
     :`<div class="card"><h3>GPU</h3><div class="sub">not present on this machine</div><div class="kpi" style="font-size:16px;color:var(--muted)">—</div></div>`;
   cards+=`<div class="card"><h3>Quick actions</h3><div class="sub">the everyday loop</div><div class="row">
     <button class="btn small" onclick="showView('launch')">▶ Start a run</button>
@@ -481,7 +484,7 @@ async function doLaunch(force){const o=collectLaunch();o.really=true;if(force)o.
   try{const r=await api("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
     $("launch-cmd").textContent=r.command;
     if(r.need_force){
-      const det=(r.gpu_procs&&r.gpu_procs.length?"\nOn the GPU now:\n  "+r.gpu_procs.join("\n  "):"")+
+      const det=(r.gpu_procs&&r.gpu_procs.length?"\nOn the GPU now:\n  "+r.gpu_procs.map(p=>`${p.owner||"?"}  pid ${p.pid}  ${p.mem}  ${(p.name||"").split("/").pop()}`).join("\n  "):"")+
                 (r.training&&r.training.length?"\nYour running jobs:\n  "+r.training.map(p=>p.pid+" "+p.cmd.slice(0,80)).join("\n  "):"");
       if(confirm(r.error+det+"\n\nAn Isaac job needs ~11 GB and will crash with a CUDA allocation error if the card is full. If what's on the GPU is a labmate's job, DON'T pile on \u2014 wait or coordinate. If it's your own stray/finished job, stop it from the Overview page first.\n\nLaunch anyway?"))
         return doLaunch(true);
