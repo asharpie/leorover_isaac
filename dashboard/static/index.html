@@ -192,7 +192,11 @@ pre.report{background:#fbfaf7;border:1px solid var(--line);border-radius:8px;pad
     </div>
     <div class="note info" style="margin-top:12px">How to read this: <b>success%</b> climbing toward 70–100% is the headline signal. <b>Mean reward</b> rising from ≈−200 toward 0 and positive = learning. <b>Action std</b> healthy at ~0.2–0.7; a crash to ~0.02 means exploration collapsed. The first ~40 iterations show no reward/success — episodes just haven't finished yet, that's normal.</div>
     <div class="card" style="margin-top:12px">
-      <h3>Console tail</h3>
+      <div class="row"><h3 style="margin:0">Console tail</h3><span style="flex:1"></span>
+        <label class="switch"><input type="checkbox" id="live-tailpause"> pause tail</label>
+        <button class="btn sec small" onclick="copyTail()">Copy tail</button>
+        <button class="btn sec small" onclick="dlLiveLog()">⬇ full log</button></div>
+      <div class="sub" style="margin-top:4px">Refresh never overwrites text you're selecting — or tick “pause tail” while you copy. “Full log” downloads the whole file.</div>
       <pre class="console" id="live-tail">select a log above…</pre>
     </div>
   </section>
@@ -473,9 +477,16 @@ async function previewLaunch(){try{const r=await api("/api/launch",{method:"POST
   $("launch-cmd").textContent=r.command;}catch(e){toast(e.message);}}
 function copyCmd(){const t=$("launch-cmd").textContent;if(t==="—"){previewLaunch().then(()=>navigator.clipboard.writeText($("launch-cmd").textContent).then(()=>toast("Command copied")));}
   else navigator.clipboard.writeText(t).then(()=>toast("Command copied"));}
-async function doLaunch(){const o=collectLaunch();o.really=true;
+async function doLaunch(force){const o=collectLaunch();o.really=true;if(force)o.force=true;
   try{const r=await api("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
     $("launch-cmd").textContent=r.command;
+    if(r.need_force){
+      const det=(r.gpu_procs&&r.gpu_procs.length?"\nOn the GPU now:\n  "+r.gpu_procs.join("\n  "):"")+
+                (r.training&&r.training.length?"\nYour running jobs:\n  "+r.training.map(p=>p.pid+" "+p.cmd.slice(0,80)).join("\n  "):"");
+      if(confirm(r.error+det+"\n\nAn Isaac job needs ~11 GB and will crash with a CUDA allocation error if the card is full. If what's on the GPU is a labmate's job, DON'T pile on \u2014 wait or coordinate. If it's your own stray/finished job, stop it from the Overview page first.\n\nLaunch anyway?"))
+        return doLaunch(true);
+      $("launch-result").innerHTML=`<span class="pill warn"><span class="dot"></span> not launched</span> ${esc(r.error)} Check the Overview page.`;
+      return;}
     if(r.launched){$("launch-result").innerHTML=`<span class="pill ok"><span class="dot"></span> launched</span> &nbsp; log: <code>${esc(r.log)}</code> — <a style="cursor:pointer" onclick="openLog('${esc(r.log)}')">watch it live →</a>`;toast("Launched. It keeps running even if you close this page.");poll();}
     else{$("launch-result").innerHTML=`<span class="pill warn"><span class="dot"></span> not launched</span> ${esc(r.error||"")} — copy the command above.`;}
   }catch(e){toast(e.message);}}
@@ -498,7 +509,8 @@ async function loadLive(force){
     plot("c-live-rew",[{x:d.reward.map(p=>p[0]),y:d.reward.map(p=>p[1]),name:"mean reward",mode:"lines",line:{color:C.lqr,width:2}}],{showlegend:false,yaxis:{title:"reward"}});
     plot("c-live-std",[{x:d.std.map(p=>p[0]),y:d.std.map(p=>p[1]),name:"action std",mode:"lines",line:{color:C.ppo,width:2}}],
       {showlegend:false,yaxis:{title:"std"},shapes:[{type:"rect",xref:"paper",x0:0,x1:1,y0:0.2,y1:0.7,fillcolor:"rgba(85,187,102,.08)",line:{width:0}}]});
-    $("live-tail").textContent=d.tail||"(empty)";$("live-tail").scrollTop=1e9;
+    const tl=$("live-tail"),sel=getSelection(),selIn=sel&&sel.rangeCount&&!sel.isCollapsed&&tl.contains(sel.anchorNode);
+    if(!selIn&&!$("live-tailpause").checked){if(tl.textContent!==(d.tail||"(empty)")){tl.textContent=d.tail||"(empty)";tl.scrollTop=1e9;}}
     const lastStd=d.std.length?d.std[d.std.length-1][1]:null;
     const lastSucc=d.success.length?d.success[d.success.length-1][1]:null;
     let h="";
@@ -509,6 +521,9 @@ async function loadLive(force){
   }catch(e){$("live-tail").textContent="error: "+e.message;}
   clearTimeout(liveTimer);
   if($("live-auto").checked&&curView==="live")liveTimer=setTimeout(()=>loadLive(false),5000);}
+
+function copyTail(){navigator.clipboard.writeText($("live-tail").textContent).then(()=>toast("Console tail copied"));}
+function dlLiveLog(){const p=$("live-log").value;if(p)window.open("/api/file?path="+encodeURIComponent(p)+"&dl=1");}
 
 /* ================= RUNS ================= */
 async function renderRuns(){const r=await api("/api/runs");RUNS=r.runs;fillCsvPickers();

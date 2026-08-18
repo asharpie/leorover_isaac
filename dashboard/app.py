@@ -681,6 +681,20 @@ def launch(kind, opts):
     if not can_launch():
         return {"command": shown, "launched": False,
                 "error": "This machine has no run_lab.sh + GPU. Copy the command and run it on the lab box."}
+    # GPU / duplicate-run guard: an Isaac job needs ~11 GB; launching onto a busy
+    # card dies at PhysX scene creation with a CUDA alloc failure.
+    if kind != "custom" and not opts.get("force"):
+        gpu, gprocs = gpu_status()
+        busy = []
+        if gpu and gpu["mem_used"] > 3000:
+            busy.append("the GPU already has %.1f GB in use" % (gpu["mem_used"] / 1024.0))
+        tp = training_procs()
+        if kind == "train" and any("scripts/train.py" in p["cmd"] for p in tp):
+            busy.append("a training process is already running")
+        if busy:
+            return {"command": shown, "launched": False, "need_force": True,
+                    "error": "Not launched: " + " and ".join(busy) + ".",
+                    "gpu_procs": gprocs, "training": tp}
     with open(logp, "w") as lf:
         lf.write("$ %s\n\n" % shown)
         lf.flush()
