@@ -53,3 +53,18 @@ builds the exact command for you to copy into a lab-box terminal.
 
 Port/host options: `--port 8321 --host 127.0.0.1` (default binds localhost
 only; use the SSH tunnel rather than exposing it).
+
+## One-click launcher for Windows (laptop & PC)
+
+No terminals needed. In `dashboard/windows/`:
+
+1. Double-click **`Create Desktop Shortcut.bat`** once — puts a
+   "Leo Mission Control" icon on your Desktop.
+2. Double-click the icon. The **first** run asks for the lab-box password
+   one time (it installs a login key); every run after that is silent:
+   it makes sure the dashboard is running on the lab box, opens a hidden
+   SSH tunnel, and pops the dashboard in its own app window.
+
+Requirements: UA VPN connected, and Windows' built-in OpenSSH client
+(present by default on Windows 10/11). Clicking it again when everything
+is already running just reopens the window — it never starts duplicates.
