@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leo Mission Control</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛰</text></svg>">
+<script src="/static/plotly.min.js"></script>
+<style>
+:root{
+  --bg:#f6f5f2; --panel:#ffffff; --ink:#1a1c20; --muted:#6b7280; --line:#e5e3dd;
+  --accent:#b5542d; --accent-soft:#f3e2d8;
+  --hybrid:#EE6677; --lqr:#4477AA; --ppo:#55BB66; --ok:#2e7d32; --warn:#b45309; --bad:#b91c1c;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box} html,body{margin:0;height:100%}
+body{font-family:var(--sans);background:var(--bg);color:var(--ink);display:flex;min-height:100vh}
+a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+/* ---------- layout ---------- */
+#side{width:228px;flex:0 0 228px;background:#232019;color:#e9e5dc;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+#side .brand{padding:18px 18px 10px;font-weight:700;font-size:17px;letter-spacing:.2px}
+#side .brand small{display:block;font-weight:400;color:#b6ae9f;font-size:11.5px;margin-top:3px}
+#side nav{flex:1;overflow-y:auto;padding:6px 0}
+#side nav button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:none;border:0;color:#cfc9bd;padding:10px 18px;font-size:13.5px;cursor:pointer;border-left:3px solid transparent}
+#side nav button:hover{background:#2d2921;color:#fff}
+#side nav button.active{background:#332e24;color:#fff;border-left-color:var(--accent)}
+#side nav .sect{padding:14px 18px 4px;font-size:10.5px;text-transform:uppercase;letter-spacing:1px;color:#8f8878}
+#side .foot{padding:12px 18px;font-size:11px;color:#8f8878;border-top:1px solid #3a3428}
+#main{flex:1;min-width:0;display:flex;flex-direction:column}
+#topbar{display:flex;align-items:center;gap:14px;padding:10px 22px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+#topbar .title{font-weight:650;font-size:15px}
+#topbar .spacer{flex:1}
+#content{padding:20px 22px 60px;max-width:1500px;width:100%}
+.view{display:none} .view.active{display:block}
+/* ---------- widgets ---------- */
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:600;background:#eee;color:#444}
+.pill.ok{background:#e3f2e5;color:var(--ok)} .pill.warn{background:#fdf0dd;color:var(--warn)} .pill.bad{background:#fde3e3;color:var(--bad)}
+.pill .dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.grid{display:grid;gap:14px} .g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.card h3{margin:0 0 4px;font-size:13.5px;font-weight:650}
+.card .sub{color:var(--muted);font-size:12px;margin-bottom:10px;line-height:1.45}
+.kpi{font-size:26px;font-weight:700;letter-spacing:-.5px}
+.kpi small{font-size:12px;color:var(--muted);font-weight:500}
+.btn{display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:#fff;border:0;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer}
+.btn:hover{filter:brightness(1.08)} .btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.sec{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.btn.sec:hover{background:#f3f1ec}
+.btn.danger{background:var(--bad)} .btn.small{padding:5px 10px;font-size:12px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+label.f{display:block;font-size:12px;font-weight:600;margin:10px 0 3px}
+label.f span.hint{font-weight:400;color:var(--muted)}
+input[type=text],input[type=number],select,textarea{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;font-size:13px;background:#fff;font-family:inherit}
+textarea{font-family:var(--mono);font-size:12px}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.check{display:flex;align-items:center;gap:7px;font-size:13px;margin-top:8px}
+table.t{width:100%;border-collapse:collapse;font-size:12.5px}
+table.t th{text-align:left;padding:7px 9px;border-bottom:2px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);white-space:nowrap}
+table.t td{padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+table.t tr:hover td{background:#faf8f4}
+pre.console{background:#191712;color:#d9d2c2;border-radius:8px;padding:12px;font-family:var(--mono);font-size:11.5px;line-height:1.5;overflow:auto;max-height:420px;white-space:pre-wrap}
+pre.report{background:#fbfaf7;border:1px solid var(--line);border-radius:8px;padding:14px;font-family:var(--mono);font-size:12px;line-height:1.45;overflow:auto;max-height:560px;white-space:pre}
+.tabs{display:flex;gap:2px;border-bottom:2px solid var(--line);margin:6px 0 16px;flex-wrap:wrap}
+.tabs button{background:none;border:0;padding:9px 16px;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px}
+.tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+.chartbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 8px 2px;position:relative}
+.chartbox .chead{display:flex;align-items:center;padding:6px 8px 0}
+.chartbox .chead b{font-size:13px}
+.chartbox .chead .sp{flex:1}
+.chartbox .exp{font-size:11px;color:var(--muted);cursor:pointer;padding:2px 7px;border:1px solid var(--line);border-radius:5px;margin-left:5px;background:#fff}
+.chartbox .exp:hover{color:var(--accent);border-color:var(--accent)}
+.note{background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:6px;padding:10px 13px;font-size:12.5px;line-height:1.5;margin:10px 0}
+.note.info{background:#e8eef5;border-left-color:var(--lqr)}
+.crumbs{font-size:12.5px;margin-bottom:10px;color:var(--muted)}
+.crumbs a{cursor:pointer}
+.filelist button.open{background:none;border:0;color:var(--accent);cursor:pointer;font-size:12.5px;padding:0}
+.badge{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;background:#eee}
+.badge.hybrid{background:#fbe3e6;color:#a52d3d} .badge.ppo{background:#e0f2e3;color:#256a32} .badge.flat{background:#e5e9f2;color:#33507a} .badge.lqr{background:#dde8f4;color:#2c568a}
+.help h4{margin:20px 0 6px} .help p,.help li{font-size:13.5px;line-height:1.65}
+.help code{background:#efece5;padding:1px 5px;border-radius:4px;font-family:var(--mono);font-size:12px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:1100px){.two{grid-template-columns:1fr}}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid #ccc;border-top-color:var(--accent);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.empty{color:var(--muted);font-size:13px;padding:22px;text-align:center}
+#toast{position:fixed;bottom:18px;right:18px;background:#232019;color:#fff;padding:11px 16px;border-radius:8px;font-size:13px;display:none;z-index:99;max-width:440px}
+.switch{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);cursor:pointer}
+.switch input{accent-color:var(--accent)}
+</style>
+</head>
+<body>
+<aside id="side">
+  <div class="brand">🛰 Leo Mission Control<small>hybrid LQR + PPO rover stack</small></div>
+  <nav id="nav">
+    <div class="sect">Operate</div>
+    <button data-v="overview" class="active">⌂ Overview</button>
+    <button data-v="launch">▶ Launch</button>
+    <button data-v="live">📡 Live training</button>
+    <div class="sect">Results</div>
+    <button data-v="runs">🗂 Runs &amp; checkpoints</button>
+    <button data-v="train">📈 Training analysis</button>
+    <button data-v="evals">⚖ Evaluations</button>
+    <div class="sect">Data</div>
+    <button data-v="explore">🔍 Data explorer</button>
+    <button data-v="files">📁 Files</button>
+    <div class="sect">Reference</div>
+    <button data-v="help">? Help &amp; glossary</button>
+  </nav>
+  <div class="foot" id="footinfo">connecting…</div>
+</aside>
+
+<main id="main">
+  <div id="topbar">
+    <span class="title" id="viewtitle">Overview</span>
+    <span class="spacer"></span>
+    <label class="switch" title="Restyle every chart for the paper: white background, serif fonts, high-res export">
+      <input type="checkbox" id="papermode"> Paper figures
+    </label>
+    <span class="pill" id="gpupill"><span class="dot"></span> GPU …</span>
+    <span class="pill" id="trainpill"><span class="dot"></span> …</span>
+  </div>
+  <div id="content">
+
+  <!-- ============ OVERVIEW ============ -->
+  <section class="view active" id="v-overview">
+    <div class="grid g3" id="ov-cards"></div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card">
+        <h3>Running processes</h3>
+        <div class="sub">Training and evaluation jobs owned by you on this machine. <b>Stop</b> uses the safe kill that frees the GPU properly.</div>
+        <div id="ov-procs"></div>
+      </div>
+      <div class="card">
+        <h3>Recent logs</h3>
+        <div class="sub">Every run started with <code>leo train</code> or from this dashboard writes a live log. Click one to watch it.</div>
+        <div id="ov-logs"></div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3>Latest runs</h3>
+      <div class="sub">The newest training run of each experiment, with one-click paths into analysis.</div>
+      <div id="ov-runs"></div>
+    </div>
+  </section>
+
+  <!-- ============ LAUNCH ============ -->
+  <section class="view" id="v-launch">
+    <div class="note" id="launch-banner" style="display:none"></div>
+    <div class="tabs" id="launch-tabs">
+      <button data-t="train" class="active">Train</button>
+      <button data-t="paired">Paired eval</button>
+      <button data-t="multieval">Multi-world eval</button>
+      <button data-t="quickeval">Quick eval</button>
+      <button data-t="trace">Trace</button>
+      <button data-t="diagnose">Diagnose stalls</button>
+      <button data-t="record">Record 3D demo</button>
+      <button data-t="custom">Advanced</button>
+    </div>
+    <div class="two">
+      <div class="card" id="launch-form"></div>
+      <div>
+        <div class="card">
+          <h3>Command preview</h3>
+          <div class="sub">Exactly what will run on the machine (same commands as the <code>leo</code> helper). You can always copy it and run it in a terminal instead.</div>
+          <pre class="console" id="launch-cmd" style="max-height:130px">—</pre>
+          <div class="row" style="margin-top:10px">
+            <button class="btn sec" onclick="previewLaunch()">Show command</button>
+            <button class="btn sec" onclick="copyCmd()">Copy</button>
+            <button class="btn" id="launch-go" onclick="doLaunch()">▶ Launch</button>
+          </div>
+          <div id="launch-result" style="font-size:12.5px;margin-top:10px"></div>
+        </div>
+        <div class="card" style="margin-top:14px" id="launch-explain"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LIVE ============ -->
+  <section class="view" id="v-live">
+    <div class="row" style="margin-bottom:12px">
+      <select id="live-log" style="max-width:520px"></select>
+      <button class="btn sec small" onclick="loadLive(true)">Refresh</button>
+      <label class="switch"><input type="checkbox" id="live-auto" checked> auto-refresh (5&nbsp;s)</label>
+      <span id="live-health"></span>
+    </div>
+    <div class="grid g3">
+      <div class="chartbox"><div class="chead"><b>Success rate</b><span class="sp"></span><span class="exp" onclick="exportChart('c-live-succ','success_rate')">PNG</span></div><div id="c-live-succ" style="height:230px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Mean reward</b><span class="sp"></span><span class="exp" onclick="exportChart('c-live-rew','mean_reward')">PNG</span></div><div id="c-live-rew" style="height:230px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Exploration (action std)</b><span class="sp"></span><span class="exp" onclick="exportChart('c-live-std','action_std')">PNG</span></div><div id="c-live-std" style="height:230px"></div></div>
+    </div>
+    <div class="note info" style="margin-top:12px">How to read this: <b>success%</b> climbing toward 70–100% is the headline signal. <b>Mean reward</b> rising from ≈−200 toward 0 and positive = learning. <b>Action std</b> healthy at ~0.2–0.7; a crash to ~0.02 means exploration collapsed. The first ~40 iterations show no reward/success — episodes just haven't finished yet, that's normal.</div>
+    <div class="card" style="margin-top:12px">
+      <h3>Console tail</h3>
+      <pre class="console" id="live-tail">select a log above…</pre>
+    </div>
+  </section>
+
+  <!-- ============ RUNS ============ -->
+  <section class="view" id="v-runs">
+    <div class="sub" style="color:var(--muted);font-size:13px;margin-bottom:12px">Every training run found under <code>logs/</code>. Checkpoints are saved every 200 iterations; <code>model_final.pt</code> at the end.</div>
+    <div id="runs-list"></div>
+  </section>
+
+  <!-- ============ TRAINING ANALYSIS ============ -->
+  <section class="view" id="v-train">
+    <div class="card" style="margin-bottom:14px">
+      <div class="row">
+        <div style="flex:1;min-width:280px">
+          <label class="f">Dataset <span class="hint">— any episode_metrics-style CSV (training runs, evals, box_evals)</span></label>
+          <select id="ta-csv"></select>
+        </div>
+        <div><label class="f">Terrain %</label><div class="row"><input type="number" id="ta-tmin" value="" placeholder="min" style="width:70px"><input type="number" id="ta-tmax" value="" placeholder="max" style="width:70px"></div></div>
+        <div><label class="f">Friction %</label><div class="row"><input type="number" id="ta-fmin" value="" placeholder="min" style="width:70px"><input type="number" id="ta-fmax" value="" placeholder="max" style="width:70px"></div></div>
+        <div><label class="f">Path type</label><select id="ta-ptype" style="width:120px"><option value="">all</option><option>random</option><option>zigzag</option><option>curved</option><option>polygon</option></select></div>
+        <div style="align-self:end"><label class="check" title="Rows with steps>2000 are physically impossible (a known recorder bug signature) and are excluded by default"><input type="checkbox" id="ta-sane" checked> exclude corrupt rows</label></div>
+        <div style="align-self:end"><button class="btn" onclick="loadTrainAnalysis()">Analyze</button></div>
+      </div>
+    </div>
+    <div class="grid g3" id="ta-kpis"></div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="chartbox"><div class="chead"><b>Tracking error over training</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-cte','learning_cte')">PNG</span><span class="exp" onclick="exportChart('c-ta-cte','learning_cte','svg')">SVG</span></div><div id="c-ta-cte" style="height:280px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Success rate over training</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-succ','learning_success')">PNG</span><span class="exp" onclick="exportChart('c-ta-succ','learning_success','svg')">SVG</span></div><div id="c-ta-succ" style="height:280px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Reward per step</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-rew','learning_reward')">PNG</span></div><div id="c-ta-rew" style="height:280px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Episode length &amp; progress</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-len','learning_length')">PNG</span></div><div id="c-ta-len" style="height:280px"></div></div>
+      <div class="chartbox"><div class="chead"><b>CTE vs terrain difficulty</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-terr','cte_by_terrain')">PNG</span><span class="exp" onclick="exportChart('c-ta-terr','cte_by_terrain','svg')">SVG</span></div><div id="c-ta-terr" style="height:280px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Success vs terrain difficulty</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-terrs','success_by_terrain')">PNG</span></div><div id="c-ta-terrs" style="height:280px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Residual usage (hybrid only)</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-res','residuals')">PNG</span></div><div id="c-ta-res" style="height:280px"></div></div>
+      <div class="chartbox"><div class="chead"><b>CTE distribution</b><span class="sp"></span><span class="exp" onclick="exportChart('c-ta-hist','cte_distribution')">PNG</span></div><div id="c-ta-hist" style="height:280px"></div></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="row"><h3 style="margin:0">Text report</h3><span class="sp" style="flex:1"></span>
+        <button class="btn sec small" onclick="taReport()">Generate report (leo_report)</button>
+        <button class="btn sec small" onclick="dlText('ta-report','training_report.txt')">Download .txt</button></div>
+      <pre class="report" id="ta-report" style="margin-top:10px">Click “Generate report” for the full statistics summary (success, progress, CTE, trend bins, terrain bands).</pre>
+    </div>
+  </section>
+
+  <!-- ============ EVALUATIONS ============ -->
+  <section class="view" id="v-evals">
+    <div class="tabs" id="ev-tabs">
+      <button data-t="paired" class="active">Paired suites</button>
+      <button data-t="multiworld">Multi-world</button>
+      <button data-t="quick">Quick evals</button>
+      <button data-t="collapse">Collapse curves</button>
+      <button data-t="demos">3D demos</button>
+    </div>
+    <div id="ev-body"></div>
+  </section>
+
+  <!-- ============ EXPLORER ============ -->
+  <section class="view" id="v-explore">
+    <div class="card" style="margin-bottom:14px">
+      <div class="row">
+        <div style="flex:1;min-width:300px"><label class="f">CSV file <span class="hint">— pick a discovered file or paste any path</span></label>
+          <div class="row"><select id="ex-csv" style="flex:1"></select><input type="text" id="ex-path" placeholder="…or paste a path" style="flex:1"></div></div>
+        <div style="align-self:end"><button class="btn" onclick="exOpen()">Open</button></div>
+      </div>
+      <div id="ex-meta" style="margin-top:10px;font-size:12.5px;color:var(--muted)"></div>
+    </div>
+    <div class="two">
+      <div class="card">
+        <h3>Build a chart</h3>
+        <div class="sub">Pick what to plot — the server crunches the full file (even millions of rows) and sends the chart data.</div>
+        <label class="f">Chart type</label>
+        <select id="ex-kind">
+          <option value="line">Trend line (binned mean over row order)</option>
+          <option value="scatter">Scatter (X vs Y, sampled)</option>
+          <option value="hist">Histogram</option>
+          <option value="group">Grouped bars (mean ± std by category/bins)</option>
+        </select>
+        <div id="ex-controls"></div>
+        <label class="f">Filters <span class="hint">— optional, e.g. terrain 0–60 only</span></label>
+        <div id="ex-filters"></div>
+        <button class="btn sec small" onclick="exAddFilter()" style="margin-top:6px">+ add filter</button>
+        <div class="row" style="margin-top:14px"><button class="btn" onclick="exPlot()">Plot</button></div>
+      </div>
+      <div class="chartbox"><div class="chead"><b id="ex-title">Chart</b><span class="sp"></span>
+        <span class="exp" onclick="exportChart('c-ex','explorer_chart')">PNG</span>
+        <span class="exp" onclick="exportChart('c-ex','explorer_chart','svg')">SVG</span></div>
+        <div id="c-ex" style="height:430px"></div></div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <div class="row"><h3 style="margin:0">Rows</h3><span style="flex:1"></span>
+        <button class="btn sec small" onclick="exPage(-1)">‹ prev</button>
+        <span id="ex-pageinfo" style="font-size:12px;color:var(--muted)"></span>
+        <button class="btn sec small" onclick="exPage(1)">next ›</button></div>
+      <div style="overflow:auto;margin-top:8px"><table class="t" id="ex-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ============ FILES ============ -->
+  <section class="view" id="v-files">
+    <div class="crumbs" id="fb-crumbs"></div>
+    <div class="two">
+      <div class="card filelist" id="fb-list"></div>
+      <div class="card" id="fb-preview"><div class="empty">Select a file to preview it. CSVs open in the explorer, images and text preview here, anything can be downloaded.</div></div>
+    </div>
+  </section>
+
+  <!-- ============ HELP ============ -->
+  <section class="view" id="v-help">
+    <div class="card help" id="help-body"></div>
+  </section>
+
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ================= core plumbing ================= */
+const $=id=>document.getElementById(id);
+const C={hybrid:"#EE6677",lqr:"#4477AA",ppo:"#55BB66",accent:"#b5542d",grey:"#8a8578"};
+let STATUS=null, RUNS=[], EVALS=null, paper=false;
+function toast(m){const t=$("toast");t.textContent=m;t.style.display="block";clearTimeout(t._h);t._h=setTimeout(()=>t.style.display="none",4200);}
+async function api(p,opt){const r=await fetch(p,opt);const j=await r.json().catch(()=>({error:"bad response"}));if(j.error)throw new Error(j.error);return j;}
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function fmt(x,d=3){if(x==null||x!==x)return"–";if(typeof x!=="number")return esc(x);if(Number.isInteger(x)&&Math.abs(x)<1e7)return String(x);return x.toFixed(Math.abs(x)>=100?1:d);}
+
+/* ---------- plotly theming ---------- */
+function baseLayout(over){
+  const font = paper?{family:"Georgia, 'Times New Roman', serif",size:14,color:"#111"}
+                    :{family:"-apple-system,Segoe UI,Roboto,sans-serif",size:12,color:"#333"};
+  return Object.assign({
+    margin:{l:52,r:14,t:8,b:42},paper_bgcolor:"rgba(0,0,0,0)",plot_bgcolor:paper?"#fff":"rgba(0,0,0,0)",
+    font,showlegend:true,legend:{orientation:"h",y:1.12,x:0},
+    xaxis:{gridcolor:"#eceae4",zeroline:false},yaxis:{gridcolor:"#eceae4",zeroline:false},
+    colorway:[C.hybrid,C.lqr,C.ppo,C.accent,"#9467bd","#8c564b"]
+  },over||{});
+}
+function plot(el,traces,layout){Plotly.react($(el),traces,baseLayout(layout),{displayModeBar:false,responsive:true});}
+function exportChart(el,name,format){const gd=$(el);if(!gd||!gd.data){toast("Nothing to export yet");return;}
+  Plotly.downloadImage(gd,{format:format||"png",scale:paper?4:2,filename:name,width:900,height:560});}
+function dlText(el,name){const b=new Blob([$(el).textContent],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download=name;a.click();}
+$("papermode").onchange=e=>{paper=e.target.checked;toast(paper?"Paper mode: white/serif styling + 4× export resolution":"Screen styling restored");refreshCurrentView();};
+
+/* ---------- navigation ---------- */
+const TITLES={overview:"Overview",launch:"Launch",live:"Live training",runs:"Runs & checkpoints",train:"Training analysis",evals:"Evaluations",explore:"Data explorer",files:"Files",help:"Help & glossary"};
+let curView="overview";
+document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>showView(b.dataset.v));
+function showView(v){curView=v;document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.v===v));
+  document.querySelectorAll(".view").forEach(s=>s.classList.toggle("active",s.id==="v-"+v));
+  $("viewtitle").textContent=TITLES[v]||v; refreshCurrentView();}
+function refreshCurrentView(){({overview:renderOverview,live:()=>loadLive(false),runs:renderRuns,train:()=>{},evals:renderEvalTab,explore:()=>{},files:()=>{},help:renderHelp}[curView]||(()=>{}))();}
+
+/* ================= status polling ================= */
+async function poll(){try{
+  STATUS=await api("/api/status");
+  $("footinfo").innerHTML=`${esc(STATUS.host)}<br>${STATUS.can_launch?"● can launch runs":"○ view-only machine"}<br>${esc(STATUS.time)}`;
+  const g=$("gpupill");
+  if(STATUS.gpu){const pct=100*STATUS.gpu.mem_used/STATUS.gpu.mem_total;
+    g.className="pill "+(pct>85?"bad":pct>40?"warn":"ok");
+    g.innerHTML=`<span class="dot"></span> GPU ${(STATUS.gpu.mem_used/1024).toFixed(1)}/${(STATUS.gpu.mem_total/1024).toFixed(0)} GB · ${STATUS.gpu.util|0}%`;}
+  else{g.className="pill";g.innerHTML=`<span class="dot"></span> no GPU here`;}
+  const t=$("trainpill"),n=STATUS.training.length;
+  t.className="pill "+(n?"ok":"");t.innerHTML=`<span class="dot"></span> ${n?n+" job"+(n>1?"s":"")+" running":"idle"}`;
+  if(curView==="overview")renderOverview();
+}catch(e){$("footinfo").textContent="server unreachable";}}
+setInterval(poll,5000);
+
+/* ================= OVERVIEW ================= */
+function renderOverview(){if(!STATUS)return;
+  const s=STATUS;let cards="";
+  cards+=`<div class="card"><h3>Machine</h3><div class="sub">where this dashboard is running</div><div class="kpi" style="font-size:18px">${esc(s.host)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-top:6px">${s.can_launch?"GPU + Isaac launcher found — you can start runs from the Launch page.":"No GPU/launcher here — browsing & analysis only; the Launch page will hand you copy-paste commands."}</div></div>`;
+  cards+=s.gpu?`<div class="card"><h3>GPU memory</h3><div class="sub">jobs need ~11 GB; be kind to labmates</div><div class="kpi">${(s.gpu.mem_used/1024).toFixed(1)} <small>/ ${(s.gpu.mem_total/1024).toFixed(0)} GB · util ${s.gpu.util|0}%</small></div>
+    <div style="font-size:11.5px;color:var(--muted);margin-top:6px">${s.gpu_procs.length?esc(s.gpu_procs.join("; ")):"no compute processes"}</div></div>`
+    :`<div class="card"><h3>GPU</h3><div class="sub">not present on this machine</div><div class="kpi" style="font-size:16px;color:var(--muted)">—</div></div>`;
+  cards+=`<div class="card"><h3>Quick actions</h3><div class="sub">the everyday loop</div><div class="row">
+    <button class="btn small" onclick="showView('launch')">▶ Start a run</button>
+    <button class="btn sec small" onclick="showView('live')">Watch training</button>
+    <button class="btn sec small" onclick="showView('evals')">Compare controllers</button></div></div>`;
+  $("ov-cards").innerHTML=cards;
+  $("ov-procs").innerHTML=s.training.length?`<table class="t"><tr><th>PID</th><th>up</th><th>command</th><th></th></tr>`+
+    s.training.map(p=>`<tr><td>${p.pid}</td><td>${esc(p.etime)}</td><td style="font-family:var(--mono);font-size:11px">${esc(p.cmd)}</td>
+    <td><button class="btn danger small" onclick="stopProc(${p.pid})">stop</button></td></tr>`).join("")+`</table>`
+    :`<div class="empty">Nothing running. Start one from the Launch page.</div>`;
+  $("ov-logs").innerHTML=s.logs.length?s.logs.slice(0,8).map(l=>`<div style="padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px">
+    <a onclick="openLog('${esc(l.path)}')" style="cursor:pointer">${esc(l.name)}</a>
+    <span style="color:var(--muted)"> · ${esc(l.mtime)} · ${esc(l.size)}</span></div>`).join("")
+    :`<div class="empty">No logs yet in ~/leo_logs.</div>`;
+  api("/api/runs").then(r=>{RUNS=r.runs;
+    const latest={};for(const run of RUNS){if(!latest[run.experiment])latest[run.experiment]=run;}
+    $("ov-runs").innerHTML=Object.keys(latest).length?`<table class="t"><tr><th>experiment</th><th>run</th><th>updated</th><th>checkpoints</th><th>episodes CSV</th><th></th></tr>`+
+      Object.values(latest).map(run=>rowRun(run)).join("")+`</table>`:`<div class="empty">No runs found under logs/ on this machine. If your runs live on the lab box, run this dashboard there and open it through the SSH tunnel.</div>`;
+    fillCsvPickers();});
+}
+async function stopProc(pid){if(!confirm("Force-stop PID "+pid+"? (safe kill — frees the GPU)"))return;
+  try{await api("/api/stop",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pid})});toast("Stopped "+pid);poll();}catch(e){toast(e.message);}}
+function rowRun(run){const alias=run.experiment.endsWith("hybrid")?"hybrid":run.experiment.endsWith("flat")?"flat":"ppo";
+  return `<tr><td><span class="badge ${alias}">${alias}</span></td><td style="font-family:var(--mono)">${esc(run.name)}</td>
+  <td>${esc(run.mtime)}</td><td>${run.checkpoints.length}</td><td>${run.csv?esc(run.csv_size):"—"}</td>
+  <td class="row">${run.csv?`<button class="btn sec small" onclick="gotoTrain('${esc(run.csv)}')">analyze</button>`:""}
+  <button class="btn sec small" onclick="showView('runs')">details</button></td></tr>`;}
+
+/* ================= LAUNCH ================= */
+let launchTab="train";
+document.querySelectorAll("#launch-tabs button").forEach(b=>b.onclick=()=>{launchTab=b.dataset.t;
+  document.querySelectorAll("#launch-tabs button").forEach(x=>x.classList.toggle("active",x===b));renderLaunchForm();});
+const REWARD_KNOBS=[
+ ["LEOROVER_W_PROGRESS","150","Reward for driving forward along the path. The fix that made training work (stock 10 barely moves)."],
+ ["LEOROVER_W_EFFORT","0.05","Penalty for using the controls. Stock 0.5 taught the rover that “do nothing” was optimal."],
+ ["LEOROVER_W_SMOOTH","0.1","Penalty for jerky control changes."],
+ ["LEOROVER_W_CTE","5","Penalty for cross-track error (distance off the path)."],
+ ["LEOROVER_ENT_COEF","0.005","Exploration pressure. Raise if the action std collapses early."],
+];
+const EXPLAIN={
+ train:`<h3>What training does</h3><div class="sub">Launches thousands of simulated rovers in parallel on the Mars terrain, learning with PPO. <b>hybrid</b> = LQR baseline + learned residual (the main recipe) · <b>ppo</b> = pure PPO comparison baseline · <b>flat</b> = quick smoke test. Runs in the background and survives logout; watch it on the Live page. Checkpoints save every 200 iterations, so you never lose progress. The reward knobs default to the <b>validated fix</b> — the settings that actually learn.</div>`,
+ paired:`<h3>What a paired eval is</h3><div class="sub">The headline experiment: hybrid, pure-LQR (and pure-PPO if trained) each drive the <b>same</b> scenarios — same paths, same terrain patches, same per-wheel friction — so any difference is attributable to the controller. Produces <code>evals/paired/&lt;stamp&gt;/</code> with per-episode CSVs and a stats.txt with paired t-tests and McNemar. View it in Evaluations → Paired suites.</div>`,
+ multieval:`<h3>What a multi-world eval is</h3><div class="sub">The generalization answer: repeats a paired hybrid-vs-LQR eval across freshly generated terrain worlds (different seeds). ~20–25 min per world. The Evaluations tab turns the result into a forest plot — one point per world.</div>`,
+ quickeval:`<h3>What a quick eval is</h3><div class="sub">A fast single-controller sweep over pinned terrain levels (no pairing). Good for a sanity check of the newest checkpoint; use the paired eval for paper numbers.</div>`,
+ trace:`<h3>What trace does</h3><div class="sub">Runs the newest (or chosen) checkpoint on ~1000 rovers, prints the population summary (how many reach the goal, progress percentiles) and saves a top-down picture of the driven path — the fastest “is it actually driving?” check. Read the POPULATION block, not the single env-0 line.</div>`,
+ diagnose:`<h3>What diagnose does</h3><div class="sub">Catches rovers that get stuck, classifies <i>why</i> (off-path, wedged-blocked, wedged-beached, wheel-slip, idle) and prints a fix recommendation. Saves a 9-panel picture of stuck rovers.</div>`,
+ record:`<h3>What record does</h3><div class="sub">Records a few episodes and builds an interactive 3-D replay (HTML you can open in any browser and share) — hybrid vs LQR side by side, trails coloured by wheel slip.</div>`,
+ custom:`<h3>Advanced</h3><div class="sub">Any shell command, run from the repo root with your extra environment variables. For experts — e.g. <code>bash scripts/collapse_sweep.sh</code> or a custom <code>LEOROVER_*</code> sweep. See Help for the full knob reference.</div>`};
+function fld(id,label,val,hint,w){return `<div style="min-width:${w||110}px"><label class="f">${label}${hint?` <span class="hint">${hint}</span>`:""}</label><input type="text" id="${id}" value="${esc(val)}"></div>`;}
+function renderLaunchForm(){
+  const f=$("launch-form");let h="";
+  if(launchTab==="train"){h=`<h3>Start a training run</h3>
+    <label class="f">Controller</label><select id="l-alias">
+      <option value="hybrid">hybrid — LQR + learned residual (the main one)</option>
+      <option value="ppo">ppo — pure PPO baseline</option>
+      <option value="flat">flat — flat-ground smoke test</option></select>
+    <div class="row">${fld("l-envs","Parallel rovers","4096","(fewer = less GPU memory)")}${fld("l-iters","Max iterations","","(blank = run until stopped)")}${fld("l-residual","Residual scale","0.5","(0 = pure LQR)")}</div>
+    <label class="f" style="margin-top:14px">Reward settings <span class="hint">— defaults are the validated fix; blank a box to use stock</span></label>
+    <div class="row">`+REWARD_KNOBS.map(([k,v,tip])=>`<div style="min-width:150px" title="${esc(tip)}"><label class="f" style="margin-top:4px">${k.replace("LEOROVER_","")}</label><input type="text" id="l-${k}" value="${v}"></div>`).join("")+`</div>
+    <label class="check"><input type="checkbox" id="l-raw"> use stock reward weights instead (the A/B “doesn’t learn” config)</label>`;}
+  else if(launchTab==="paired"){h=`<h3>Paired evaluation (hybrid vs LQR vs PPO)</h3>
+    <div class="row">${fld("l-n","Scenarios","90000")}${fld("l-levels","Terrain levels","0,20,40,60,80,100","(multiples of 20 — others snap)")}${fld("l-envs","Parallel rovers","1024")}</div>
+    <div class="row">${fld("l-friction","Base friction","1.0")}<div><label class="f">Path set</label><select id="l-paths"><option>discrete</option><option>random</option></select></div></div>`;}
+  else if(launchTab==="multieval"){h=`<h3>Multi-world generalization eval</h3>
+    <div class="row">${fld("l-worlds","Worlds","12")}${fld("l-seedbase","First seed","201")}${fld("l-n","Scenarios / world","12000")}</div>
+    <div class="row">${fld("l-pathbank","Path bank","2000")}${fld("l-levels","Levels","0,20,40,60,80,100")}${fld("l-envs","Parallel rovers","1024")}</div>
+    <div class="note">Heads-up: ~20–25 minutes per world on the 4090 → a 12-world run is ~4–5 hours.</div>`;}
+  else if(launchTab==="quickeval"){h=`<h3>Quick single-controller eval</h3>
+    <label class="f">Controller</label><select id="l-alias"><option>hybrid</option><option>lqr</option><option>ppo</option></select>
+    <div class="row">${fld("l-levels","Levels","0,20,40,60,80,100")}${fld("l-envs","Rovers","1024")}${fld("l-steps","Steps","6000")}</div>`;}
+  else if(launchTab==="trace"){h=`<h3>Trace the newest checkpoint</h3>
+    <div class="row">${fld("l-model","Checkpoint #","","(blank = newest; e.g. 600 → model_600.pt)")}${fld("l-envs","Rovers","1024")}${fld("l-steps","Steps","1500")}</div>
+    <label class="check"><input type="checkbox" id="l-lqr"> pure LQR (zero the learned residual)</label>`;}
+  else if(launchTab==="diagnose"){h=`<h3>Diagnose stalls</h3>
+    <div class="row">${fld("l-model","Checkpoint #","","(blank = newest)")}${fld("l-terrain","Terrain %","20")}</div>
+    <label class="check"><input type="checkbox" id="l-lqr"> pure LQR</label>`;}
+  else if(launchTab==="record"){h=`<h3>Record a 3-D demo</h3>
+    <label class="f">Mode</label><select id="l-mode"><option value="pair">pair — hybrid & LQR side by side</option><option value="ppo">ppo only</option></select>
+    <div class="row">${fld("l-num","Scenarios","2")}${fld("l-level","Terrain %","60")}${fld("l-seed","Seed","7")}${fld("l-friction","Friction","","(blank = 1.0)")}</div>`;}
+  else if(launchTab==="custom"){h=`<h3>Custom command</h3>
+    <label class="f">Shell command <span class="hint">(runs from the repo root)</span></label>
+    <textarea id="l-cmd" rows="3" placeholder="bash scripts/collapse_sweep.sh"></textarea>
+    <label class="f">Extra environment variables <span class="hint">(one per line, KEY=value)</span></label>
+    <textarea id="l-env" rows="4" placeholder="LEOROVER_TERRAIN_AMP=2.25&#10;LEOROVER_SOIL_CRR=0.06"></textarea>`;}
+  f.innerHTML=h;$("launch-explain").innerHTML=EXPLAIN[launchTab]||"";
+  $("launch-cmd").textContent="—";$("launch-result").textContent="";
+  const b=$("launch-banner");
+  if(STATUS&&!STATUS.can_launch){b.style.display="block";b.innerHTML=`This machine can’t run Isaac (no GPU / launcher). Build the command here, hit <b>Copy</b>, and paste it in a lab-box terminal — or run this dashboard on the lab box and launch with one click.`;}
+  else b.style.display="none";
+}
+function collectLaunch(){const o={kind:launchTab,env:{}};const g=id=>{const e=$(id);return e?e.value.trim():"";};
+  if(launchTab==="train"){o.alias=g("l-alias");o.envs=g("l-envs");o.iters=g("l-iters");o.residual=g("l-residual");o.raw=$("l-raw").checked;
+    if(!o.raw)for(const[k]of REWARD_KNOBS){const v=g("l-"+k);if(v)o.env[k]=v;}
+    if(o.env["LEOROVER_ENT_COEF"]){o.ent=o.env["LEOROVER_ENT_COEF"];delete o.env["LEOROVER_ENT_COEF"];}}
+  else if(launchTab==="paired"){o.n=g("l-n");o.levels=g("l-levels");o.envs=g("l-envs");o.friction=g("l-friction");o.paths=g("l-paths");}
+  else if(launchTab==="multieval"){for(const k of["worlds","seedbase","n","pathbank","levels","envs"])o[k]=g("l-"+k);}
+  else if(launchTab==="quickeval"){o.alias=g("l-alias");o.levels=g("l-levels");o.envs=g("l-envs");o.steps=g("l-steps");}
+  else if(launchTab==="trace"){o.model=g("l-model");o.envs=g("l-envs");o.steps=g("l-steps");o.lqr=$("l-lqr").checked;}
+  else if(launchTab==="diagnose"){o.model=g("l-model");o.terrain=g("l-terrain");o.lqr=$("l-lqr").checked;}
+  else if(launchTab==="record"){o.mode=g("l-mode");o.num=g("l-num");o.level=g("l-level");o.seed=g("l-seed");o.friction=g("l-friction");}
+  else if(launchTab==="custom"){o.cmd=g("l-cmd");for(const ln of g("l-env").split("\n")){const m=ln.match(/^([A-Z0-9_]+)=(.*)$/);if(m)o.env[m[1]]=m[2];}}
+  return o;}
+async function previewLaunch(){try{const r=await api("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(collectLaunch())});
+  $("launch-cmd").textContent=r.command;}catch(e){toast(e.message);}}
+function copyCmd(){const t=$("launch-cmd").textContent;if(t==="—"){previewLaunch().then(()=>navigator.clipboard.writeText($("launch-cmd").textContent).then(()=>toast("Command copied")));}
+  else navigator.clipboard.writeText(t).then(()=>toast("Command copied"));}
+async function doLaunch(){const o=collectLaunch();o.really=true;
+  try{const r=await api("/api/launch",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});
+    $("launch-cmd").textContent=r.command;
+    if(r.launched){$("launch-result").innerHTML=`<span class="pill ok"><span class="dot"></span> launched</span> &nbsp; log: <code>${esc(r.log)}</code> — <a style="cursor:pointer" onclick="openLog('${esc(r.log)}')">watch it live →</a>`;toast("Launched. It keeps running even if you close this page.");poll();}
+    else{$("launch-result").innerHTML=`<span class="pill warn"><span class="dot"></span> not launched</span> ${esc(r.error||"")} — copy the command above.`;}
+  }catch(e){toast(e.message);}}
+
+/* ================= LIVE ================= */
+let liveTimer=null;
+function openLog(p){showView("live");const s=$("live-log");
+  if(![...s.options].some(o=>o.value===p)){const o=document.createElement("option");o.value=p;o.textContent=p.split("/").pop();s.appendChild(o);}
+  s.value=p;loadLive(true);}
+async function loadLive(force){
+  const s=$("live-log");
+  if(STATUS&&(force||!s.options.length)){const cur=s.value;s.innerHTML=STATUS.logs.map(l=>`<option value="${esc(l.path)}">${esc(l.name)} — ${esc(l.mtime)}</option>`).join("");
+    if(cur&&[...s.options].some(o=>o.value===cur))s.value=cur;}
+  if(!s.value){$("live-tail").textContent="No logs found yet — start a run from the Launch page.";return;}
+  try{const d=await api("/api/log?path="+encodeURIComponent(s.value));
+    plot("c-live-succ",[
+      {x:d.success.map(p=>p[0]),y:d.success.map(p=>p[1]),name:"rollout success %",mode:"lines",line:{color:C.hybrid,width:2}},
+      {x:d.adr.map(p=>p[0]),y:d.adr.map(p=>p[1]),name:"deterministic eval %",mode:"markers",marker:{color:C.accent,size:8,symbol:"diamond"}}],
+      {yaxis:{title:"success %",range:[0,100],gridcolor:"#eceae4"}});
+    plot("c-live-rew",[{x:d.reward.map(p=>p[0]),y:d.reward.map(p=>p[1]),name:"mean reward",mode:"lines",line:{color:C.lqr,width:2}}],{showlegend:false,yaxis:{title:"reward"}});
+    plot("c-live-std",[{x:d.std.map(p=>p[0]),y:d.std.map(p=>p[1]),name:"action std",mode:"lines",line:{color:C.ppo,width:2}}],
+      {showlegend:false,yaxis:{title:"std"},shapes:[{type:"rect",xref:"paper",x0:0,x1:1,y0:0.2,y1:0.7,fillcolor:"rgba(85,187,102,.08)",line:{width:0}}]});
+    $("live-tail").textContent=d.tail||"(empty)";$("live-tail").scrollTop=1e9;
+    const lastStd=d.std.length?d.std[d.std.length-1][1]:null;
+    const lastSucc=d.success.length?d.success[d.success.length-1][1]:null;
+    let h="";
+    if(lastStd!=null&&lastStd<0.05)h+=`<span class="pill bad"><span class="dot"></span> exploration collapsed (std ${lastStd.toFixed(3)})</span> `;
+    else if(lastStd!=null)h+=`<span class="pill ok"><span class="dot"></span> exploring (std ${lastStd.toFixed(2)})</span> `;
+    if(lastSucc!=null)h+=`<span class="pill ${lastSucc>60?"ok":lastSucc>20?"warn":""}"><span class="dot"></span> success ${lastSucc.toFixed(1)}%</span>`;
+    $("live-health").innerHTML=h;
+  }catch(e){$("live-tail").textContent="error: "+e.message;}
+  clearTimeout(liveTimer);
+  if($("live-auto").checked&&curView==="live")liveTimer=setTimeout(()=>loadLive(false),5000);}
+
+/* ================= RUNS ================= */
+async function renderRuns(){const r=await api("/api/runs");RUNS=r.runs;fillCsvPickers();
+  if(!RUNS.length){$("runs-list").innerHTML=`<div class="card"><div class="empty">No runs under <code>logs/</code> on this machine.<br>Training runs live on the lab box — run the dashboard there (<code>python3 dashboard/app.py</code>) and open it through the tunnel.</div></div>`;return;}
+  $("runs-list").innerHTML=RUNS.map((run,i)=>{const alias=run.experiment.endsWith("hybrid")?"hybrid":run.experiment.endsWith("flat")?"flat":"ppo";
+    const art=Object.entries(run.artifacts).map(([k,p])=>`<a onclick="previewImage('${esc(p)}','${k}')" style="cursor:pointer">${k}.png</a>`).join(" · ");
+    return `<div class="card" style="margin-bottom:12px"><div class="row">
+      <span class="badge ${alias}">${alias}</span><b style="font-family:var(--mono)">${esc(run.name)}</b>
+      <span style="color:var(--muted);font-size:12px">updated ${esc(run.mtime)}</span><span style="flex:1"></span>
+      ${run.csv?`<button class="btn small" onclick="gotoTrain('${esc(run.csv)}')">📈 analyze training</button>
+      <button class="btn sec small" onclick="gotoExplore('${esc(run.csv)}')">explore CSV</button>`:""}
+      </div>
+      <div style="font-size:12.5px;margin-top:8px;color:var(--muted)">
+      ${run.checkpoints.length} checkpoints${run.checkpoints.length?` (newest: <code>${esc(run.checkpoints[0].name)}</code>, ${esc(run.checkpoints[0].mtime)})`:""}
+      · episodes CSV: ${run.csv?esc(run.csv_size):"—"} · TensorBoard events: ${run.tensorboard?"yes":"no"}
+      ${art?`<br>diagnostic images: ${art}`:""}</div>
+      ${run.checkpoints.length>1?`<details style="margin-top:6px;font-size:12px"><summary style="cursor:pointer;color:var(--muted)">all checkpoints</summary>
+        <div style="columns:3;margin-top:6px">${run.checkpoints.map(c=>`<div style="font-family:var(--mono)">${esc(c.name)} <span style="color:var(--muted)">${esc(c.size)}</span></div>`).join("")}</div></details>`:""}
+    </div>`;}).join("");}
+function previewImage(p,name){showView("files");$("fb-preview").innerHTML=`<h3>${esc(name)}</h3><img src="/api/file?path=${encodeURIComponent(p)}" style="max-width:100%;border:1px solid var(--line);border-radius:8px"><div style="margin-top:8px"><a href="/api/file?path=${encodeURIComponent(p)}&dl=1">download</a></div>`;}
+
+/* ================= CSV pickers ================= */
+async function fillCsvPickers(){
+  if(!EVALS){try{EVALS=await api("/api/evals");}catch(e){EVALS={paired:[],multiworld:[],quick:[],demos:[],collapse:[],other_csv:[]};}}
+  const opts=[];
+  for(const run of RUNS)if(run.csv)opts.push([run.csv,`${run.experiment.replace("leo_rover_","")} / ${run.name} (training, ${run.csv_size})`]);
+  for(const q of EVALS.quick)opts.push([q.path,`quick eval: ${q.name}`]);
+  for(const pd of EVALS.paired)for(const c of pd.controllers)opts.push([pd.files[c+".csv"],`paired ${pd.name}: ${c}`]);
+  for(const o of EVALS.other_csv)opts.push([o.path,o.name+" ("+o.size+")"]);
+  const html=opts.map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  const keep=s=>{const cur=s.value;s.innerHTML=html;if(cur&&[...s.options].some(o=>o.value===cur))s.value=cur;};
+  keep($("ta-csv"));keep($("ex-csv"));}
+function gotoTrain(csv){showView("train");fillCsvPickers().then(()=>{$("ta-csv").value=csv;loadTrainAnalysis();});}
+function gotoExplore(csv){showView("explore");fillCsvPickers().then(()=>{$("ex-csv").value=csv;exOpen();});}
+
+/* ================= TRAINING ANALYSIS ================= */
+function taFilters(){const f={};
+  const tmin=$("ta-tmin").value,tmax=$("ta-tmax").value,fmin=$("ta-fmin").value,fmax=$("ta-fmax").value;
+  if(tmin!==""||tmax!=="")f.terrain_intensity=[tmin===""?null:+tmin,tmax===""?null:+tmax];
+  if(fmin!==""||fmax!=="")f.friction_intensity=[fmin===""?null:+fmin,fmax===""?null:+fmax];
+  if($("ta-ptype").value)f.path_type=["=",$("ta-ptype").value];
+  if($("ta-sane").checked)f.steps=[null,2000];
+  return f;}
+async function loadTrainAnalysis(){
+  const csv=$("ta-csv").value;if(!csv){toast("Pick a dataset first");return;}
+  const F=encodeURIComponent(JSON.stringify(taFilters()));
+  $("ta-kpis").innerHTML=`<div class="card"><span class="spin"></span> crunching ${esc(csv.split("/").pop())} …</div>`;
+  try{
+    const s=await api(`/api/csv/series?path=${encodeURIComponent(csv)}&x=episode&y=mean_cte,mean_reward_per_step,success,steps,path_progress,mean_residual_v_norm,mean_residual_w_norm,mean_slip&bins=300&filters=${F}`);
+    const meta=await api(`/api/csv/meta?path=${encodeURIComponent(csv)}`);
+    const tot=s.count.reduce((a,b)=>a+b,0);
+    const wavg=k=>{let n=0,v=0;s.series[k].forEach((x,i)=>{if(x!=null){v+=x*s.count[i];n+=s.count[i];}});return n?v/n:null;};
+    const succ=wavg("success"),cte=wavg("mean_cte"),prog=wavg("path_progress");
+    const lastN=Math.max(1,Math.floor(s.x.length/10));
+    const recent=k=>{const seg=s.series[k].slice(-lastN).filter(x=>x!=null);return seg.length?seg.reduce((a,b)=>a+b,0)/seg.length:null;};
+    $("ta-kpis").innerHTML=[
+      [`${tot.toLocaleString()}`,"episodes (after filters)","of "+meta.rows.toLocaleString()+" rows"],
+      [succ!=null?(100*succ).toFixed(1)+"%":"–","success rate","recent: "+(recent("success")!=null?(100*recent("success")).toFixed(1)+"%":"–")],
+      [cte!=null?cte.toFixed(3)+" m":"–","mean tracking error (CTE)","recent: "+(recent("mean_cte")!=null?recent("mean_cte").toFixed(3)+" m":"–")],
+      [prog!=null?prog.toFixed(1)+"%":"–","mean path progress","recent: "+(recent("path_progress")!=null?recent("path_progress").toFixed(1)+"%":"–")],
+    ].map(([k,l,sub])=>`<div class="card"><h3>${l}</h3><div class="kpi">${k}</div><div style="font-size:11.5px;color:var(--muted)">${sub}</div></div>`).join("");
+    const X=s.x;
+    plot("c-ta-cte",[{x:X,y:s.series.mean_cte,mode:"lines",name:"mean CTE (m)",line:{color:C.hybrid,width:2}}],{showlegend:false,xaxis:{title:"episode"},yaxis:{title:"CTE (m)"}});
+    plot("c-ta-succ",[{x:X,y:s.series.success.map(v=>v==null?null:100*v),mode:"lines",name:"success %",line:{color:C.ppo,width:2}}],{showlegend:false,xaxis:{title:"episode"},yaxis:{title:"success %",range:[0,100]}});
+    plot("c-ta-rew",[{x:X,y:s.series.mean_reward_per_step,mode:"lines",name:"reward/step",line:{color:C.lqr,width:2}}],{showlegend:false,xaxis:{title:"episode"},yaxis:{title:"reward / step"}});
+    plot("c-ta-len",[{x:X,y:s.series.steps,mode:"lines",name:"episode length (steps)",line:{color:C.grey,width:2}},
+                     {x:X,y:s.series.path_progress,mode:"lines",name:"path progress %",yaxis:"y2",line:{color:C.accent,width:2}}],
+      {xaxis:{title:"episode"},yaxis:{title:"steps"},yaxis2:{overlaying:"y",side:"right",title:"progress %",range:[0,100],gridcolor:"rgba(0,0,0,0)"}});
+    const gT=await api(`/api/csv/group?path=${encodeURIComponent(csv)}&by=terrain_intensity&val=mean_cte&nbins=8&filters=${F}`);
+    plot("c-ta-terr",[{x:gT.groups.map(g=>g.group),y:gT.groups.map(g=>g.mean),error_y:{type:"data",array:gT.groups.map(g=>g.std),thickness:1},type:"bar",marker:{color:C.hybrid},name:"mean CTE"}],
+      {showlegend:false,xaxis:{title:"terrain intensity %"},yaxis:{title:"CTE (m)"}});
+    const gS=await api(`/api/csv/group?path=${encodeURIComponent(csv)}&by=terrain_intensity&val=success&nbins=8&filters=${F}`);
+    plot("c-ta-terrs",[{x:gS.groups.map(g=>g.group),y:gS.groups.map(g=>100*g.mean),type:"bar",marker:{color:C.ppo},name:"success %"}],
+      {showlegend:false,xaxis:{title:"terrain intensity %"},yaxis:{title:"success %",range:[0,100]}});
+    const hasRes=s.series.mean_residual_v_norm.some(v=>v!=null&&v>0);
+    if(hasRes)plot("c-ta-res",[{x:X,y:s.series.mean_residual_v_norm,mode:"lines",name:"|residual v| (norm.)",line:{color:C.hybrid,width:2}},
+      {x:X,y:s.series.mean_residual_w_norm,mode:"lines",name:"|residual ω| (norm.)",line:{color:C.lqr,width:2}}],{xaxis:{title:"episode"},yaxis:{title:"fraction of authority",range:[0,1]}});
+    else plot("c-ta-res",[],{annotations:[{text:"no residual data in this CSV (pure-PPO or LQR run)",showarrow:false,font:{color:"#999"}}],xaxis:{visible:false},yaxis:{visible:false}});
+    const h=await api(`/api/csv/hist?path=${encodeURIComponent(csv)}&col=mean_cte&bins=50&filters=${F}`);
+    plot("c-ta-hist",[{x:h.edges,y:h.counts,type:"bar",marker:{color:C.lqr},name:"episodes"}],{showlegend:false,bargap:0,xaxis:{title:"mean CTE (m)"},yaxis:{title:"episodes"}});
+  }catch(e){$("ta-kpis").innerHTML=`<div class="card"><b style="color:var(--bad)">Couldn’t analyze:</b> ${esc(e.message)}</div>`;}}
+async function taReport(){const csv=$("ta-csv").value;if(!csv)return;
+  $("ta-report").textContent="running scripts/leo_report.py …";
+  try{const r=await api("/api/report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"leo_report",csv})});
+    $("ta-report").textContent=r.out||r.err;}catch(e){$("ta-report").textContent="error: "+e.message;}}
+
+/* ================= EVALUATIONS ================= */
+let evTab="paired";
+document.querySelectorAll("#ev-tabs button").forEach(b=>b.onclick=()=>{evTab=b.dataset.t;
+  document.querySelectorAll("#ev-tabs button").forEach(x=>x.classList.toggle("active",x===b));renderEvalTab();});
+async function renderEvalTab(){
+  document.querySelectorAll("#ev-tabs button").forEach(x=>x.classList.toggle("active",x.dataset.t===evTab));
+  EVALS=await api("/api/evals");const B=$("ev-body");
+  if(evTab==="paired"){
+    if(!EVALS.paired.length){B.innerHTML=`<div class="card"><div class="empty">No paired suites found under <code>evals/paired/</code> (or <code>box_evals/</code>).<br>Run one from Launch → Paired eval, or run the dashboard on the machine that has the results.</div></div>`;maybeBoxEvals(B);return;}
+    B.innerHTML=`<div class="card" style="margin-bottom:12px"><div class="row">
+      <select id="pe-dir" style="max-width:480px">${EVALS.paired.map(p=>`<option value="${esc(p.path)}">${esc(p.name)} — ${p.controllers.join(" vs ")} — ${esc(p.mtime)}</option>`).join("")}</select>
+      <button class="btn" onclick="loadPaired()">Load</button>
+      <button class="btn sec" onclick="pairedStats()">Statistical tests</button></div>
+      <div class="sub" style="margin-top:6px">Every controller drove the <b>same</b> scenarios — differences are attributable to the controller, not luck.</div></div>
+      <div class="grid g3" id="pe-kpis"></div>
+      <div class="grid g2" style="margin-top:12px">
+        <div class="chartbox"><div class="chead"><b>Success by terrain level</b><span class="sp"></span><span class="exp" onclick="exportChart('c-pe-succ','paired_success_by_level')">PNG</span><span class="exp" onclick="exportChart('c-pe-succ','paired_success_by_level','svg')">SVG</span></div><div id="c-pe-succ" style="height:300px"></div></div>
+        <div class="chartbox"><div class="chead"><b>Tracking error by terrain level</b><span class="sp"></span><span class="exp" onclick="exportChart('c-pe-cte','paired_cte_by_level')">PNG</span><span class="exp" onclick="exportChart('c-pe-cte','paired_cte_by_level','svg')">SVG</span></div><div id="c-pe-cte" style="height:300px"></div></div>
+        <div class="chartbox"><div class="chead"><b>Success by path geometry</b><span class="sp"></span><span class="exp" onclick="exportChart('c-pe-geom','paired_success_by_geometry')">PNG</span></div><div id="c-pe-geom" style="height:300px"></div></div>
+        <div class="chartbox"><div class="chead"><b>Per-scenario ΔCTE (hybrid − LQR)</b><span class="sp"></span><span class="exp" onclick="exportChart('c-pe-delta','paired_delta_hist')">PNG</span></div><div id="c-pe-delta" style="height:300px"></div></div>
+      </div>
+      <div class="card" style="margin-top:12px"><div class="row"><h3 style="margin:0">Paired statistical tests</h3><span style="flex:1"></span><button class="btn sec small" onclick="dlText('pe-stats','paired_stats.txt')">Download .txt</button></div>
+      <pre class="report" id="pe-stats">Click “Statistical tests” — runs the repo’s paired t-test + McNemar script on this suite.</pre></div>`;
+    loadPaired();}
+  else if(evTab==="multiworld"){
+    if(!EVALS.multiworld.length){B.innerHTML=`<div class="card"><div class="empty">No multi-world evals under <code>evals/multiworld/</code> yet. Launch one (Launch → Multi-world eval): it answers “does the hybrid’s edge generalize to terrain it never saw?”</div></div>`;return;}
+    B.innerHTML=`<div class="card" style="margin-bottom:12px"><div class="row">
+      <select id="mw-dir" style="max-width:480px">${EVALS.multiworld.map(p=>`<option value="${esc(p.path)}">${esc(p.name)} — ${p.worlds} worlds — ${esc(p.mtime)}</option>`).join("")}</select>
+      <button class="btn" onclick="loadMultiworld()">Load</button>
+      <button class="btn sec" onclick="mwStats()">Statistical tests</button></div></div>
+      <div class="two">
+      <div class="chartbox"><div class="chead"><b>Forest plot — ΔCTE per world (hybrid − LQR, 95% CI)</b><span class="sp"></span><span class="exp" onclick="exportChart('c-mw-forest','multiworld_forest')">PNG</span><span class="exp" onclick="exportChart('c-mw-forest','multiworld_forest','svg')">SVG</span></div><div id="c-mw-forest" style="height:420px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Success per world</b><span class="sp"></span><span class="exp" onclick="exportChart('c-mw-succ','multiworld_success')">PNG</span></div><div id="c-mw-succ" style="height:420px"></div></div></div>
+      <div class="card" style="margin-top:12px"><div class="row"><h3 style="margin:0">Multi-world statistics</h3><span style="flex:1"></span><button class="btn sec small" onclick="dlText('mw-stats','multiworld_stats.txt')">Download .txt</button></div>
+      <pre class="report" id="mw-stats">Click “Statistical tests” — per-world sign tests + pooled paired tests.</pre></div>`;
+    loadMultiworld();}
+  else if(evTab==="quick"){
+    if(!EVALS.quick.length&&!EVALS.other_csv.length){B.innerHTML=`<div class="card"><div class="empty">No quick-eval CSVs under <code>evals/</code>.</div></div>`;return;}
+    const all=[...EVALS.quick,...EVALS.other_csv];
+    B.innerHTML=`<div class="card" style="margin-bottom:12px"><h3>Compare eval CSVs</h3><div class="sub">Tick 1–4 files (e.g. newest hybrid_*, lqr_*, ppo_*) then Compare. Labels come from the file names. Beware stale files — dates shown on purpose.</div>
+      <div style="max-height:220px;overflow:auto">${all.map((q,i)=>`<label class="check"><input type="checkbox" class="qe-cb" value="${esc(q.path)}" data-name="${esc(q.name)}"> <code>${esc(q.name)}</code> <span style="color:var(--muted)">— ${esc(q.mtime)}</span></label>`).join("")}</div>
+      <div class="row" style="margin-top:10px"><button class="btn" onclick="quickCompare()">Compare</button>
+      <button class="btn sec" onclick="quickReport()">Text report (eval_report)</button></div></div>
+      <div class="two"><div class="chartbox"><div class="chead"><b>Success by terrain level</b><span class="sp"></span><span class="exp" onclick="exportChart('c-qe-succ','eval_success_by_level')">PNG</span><span class="exp" onclick="exportChart('c-qe-succ','eval_success_by_level','svg')">SVG</span></div><div id="c-qe-succ" style="height:340px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Mean CTE by terrain level</b><span class="sp"></span><span class="exp" onclick="exportChart('c-qe-cte','eval_cte_by_level')">PNG</span></div><div id="c-qe-cte" style="height:340px"></div></div></div>
+      <div class="card" style="margin-top:12px"><pre class="report" id="qe-report">…</pre></div>`;}
+  else if(evTab==="collapse"){
+    if(!EVALS.collapse.length){B.innerHTML=`<div class="card"><div class="empty">No collapse manifests (<code>evals/collapse_manifest_*.txt</code>). A collapse sweep re-runs the paired eval at increasing harshness H to find where each controller breaks — launch with <code>bash scripts/collapse_sweep.sh</code> (Advanced tab).</div></div>`;return;}
+    B.innerHTML=`<div class="card" style="margin-bottom:12px"><div class="row">
+      <select id="cl-man" style="max-width:480px">${EVALS.collapse.map(p=>`<option value="${esc(p.path)}">${esc(p.name)} — ${esc(p.mtime)}</option>`).join("")}</select>
+      <button class="btn" onclick="loadCollapse()">Load</button></div>
+      <div class="sub" style="margin-top:6px">Near collapse, trust <b>success%</b> — mean CTE gets censored when rovers barely move.</div></div>
+      <div class="two"><div class="chartbox"><div class="chead"><b>Success vs harshness H</b><span class="sp"></span><span class="exp" onclick="exportChart('c-cl-succ','collapse_success')">PNG</span><span class="exp" onclick="exportChart('c-cl-succ','collapse_success','svg')">SVG</span></div><div id="c-cl-succ" style="height:340px"></div></div>
+      <div class="chartbox"><div class="chead"><b>Mean CTE vs harshness H</b><span class="sp"></span><span class="exp" onclick="exportChart('c-cl-cte','collapse_cte')">PNG</span></div><div id="c-cl-cte" style="height:340px"></div></div></div>`;
+    loadCollapse();}
+  else if(evTab==="demos"){
+    B.innerHTML=EVALS.demos.length?`<div class="card"><h3>Interactive 3-D replays</h3><div class="sub">Self-contained HTML — opens in a new tab; drag to orbit, watch hybrid (red) vs LQR (blue), trails colour by wheel slip.</div>
+      <table class="t"><tr><th>file</th><th>recorded</th><th></th></tr>${EVALS.demos.map(d=>`<tr><td><code>${esc(d.name)}</code></td><td>${esc(d.mtime)}</td>
+      <td><a href="/api/file?path=${encodeURIComponent(d.path)}" target="_blank" class="btn sec small">open ↗</a></td></tr>`).join("")}</table></div>`
+      :`<div class="card"><div class="empty">No demo recordings under <code>evals/</code>. Make one from Launch → Record 3D demo.</div></div>`;}
+}
+function maybeBoxEvals(B){ if(EVALS.other_csv.some(o=>o.path.includes("box_evals"))){
+  B.innerHTML+=`<div class="note info" style="margin-top:10px">Found <code>box_evals/</code> CSVs — that folder looks like a copied paired suite. Open its hybrid/lqr/ppo CSVs in the Data explorer, or copy the folder under <code>evals/paired/</code> to get the full paired view.</div>`;}}
+async function loadPaired(){const d=$("pe-dir").value;
+  try{const P=await api("/api/paired?dir="+encodeURIComponent(d));
+    $("pe-kpis").innerHTML=P.controllers.map(c=>`<div class="card"><h3><span class="badge ${c}">${c}</span> &nbsp;overall</h3>
+      <div class="kpi">${P.overall[c].success.toFixed(1)}% <small>success</small></div>
+      <div style="font-size:12.5px;color:var(--muted)">mean CTE ${P.overall[c].cte.toFixed(3)} m · matched n = ${P.n.toLocaleString()}</div></div>`).join("");
+    plot("c-pe-succ",P.controllers.map(c=>({x:P.by_level[c].levels,y:P.by_level[c].success,type:"bar",name:c,marker:{color:C[c]}})),
+      {barmode:"group",xaxis:{title:"terrain level %"},yaxis:{title:"success %",range:[0,100]}});
+    plot("c-pe-cte",P.controllers.map(c=>({x:P.by_level[c].levels,y:P.by_level[c].cte,mode:"lines+markers",name:c,line:{color:C[c],width:2}})),
+      {xaxis:{title:"terrain level %"},yaxis:{title:"mean CTE (m)"}});
+    plot("c-pe-geom",P.controllers.map(c=>({x:P.by_geom[c].geoms,y:P.by_geom[c].success,type:"bar",name:c,marker:{color:C[c]}})),
+      {barmode:"group",xaxis:{title:"path geometry"},yaxis:{title:"success %",range:[0,100]}});
+    if(P.delta_hist&&P.delta_hist.edges.length){
+      plot("c-pe-delta",[{x:P.delta_hist.edges,y:P.delta_hist.counts,type:"bar",marker:{color:C.grey},name:"scenarios"}],
+        {showlegend:false,bargap:0,xaxis:{title:"ΔCTE per scenario (m) — negative = hybrid tracks better"},yaxis:{title:"scenarios"},
+         shapes:[{type:"line",x0:0,x1:0,yref:"paper",y0:0,y1:1,line:{color:"#333",dash:"dot"}},
+                 {type:"line",x0:P.delta_mean,x1:P.delta_mean,yref:"paper",y0:0,y1:1,line:{color:C.hybrid,width:2}}],
+         annotations:[{x:P.delta_mean,yref:"paper",y:1.04,text:"mean Δ "+P.delta_mean.toFixed(4)+" m",showarrow:false,font:{color:C.hybrid,size:11}}]});}
+  }catch(e){toast(e.message);}}
+async function pairedStats(){const d=$("pe-dir").value;$("pe-stats").textContent="running scripts/paired_stats.py …";
+  try{const r=await api("/api/report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"paired_stats",dir:d})});
+    $("pe-stats").textContent=r.out||r.err;}catch(e){$("pe-stats").textContent="error: "+e.message;}}
+async function loadMultiworld(){const d=$("mw-dir").value;
+  try{const M=await api("/api/multiworld?dir="+encodeURIComponent(d));
+    if(!M.worlds.length){toast("No usable world_* folders in there");return;}
+    const w=M.worlds;
+    plot("c-mw-forest",[{x:w.map(x=>x.dcte),y:w.map(x=>"seed "+x.seed),error_x:{type:"data",array:w.map(x=>x.ci),thickness:1.4},
+      mode:"markers",marker:{color:w.map(x=>x.dcte<0?C.hybrid:C.grey),size:9},name:"ΔCTE"}],
+      {showlegend:false,xaxis:{title:"ΔCTE (m) — negative = hybrid better"},yaxis:{automargin:true},
+       shapes:[{type:"line",x0:0,x1:0,yref:"paper",y0:0,y1:1,line:{color:"#333",dash:"dot"}}]});
+    plot("c-mw-succ",[{x:w.map(x=>"s"+x.seed),y:w.map(x=>x.succ_h),type:"bar",name:"hybrid",marker:{color:C.hybrid}},
+                      {x:w.map(x=>"s"+x.seed),y:w.map(x=>x.succ_l),type:"bar",name:"lqr",marker:{color:C.lqr}}],
+      {barmode:"group",xaxis:{title:"world"},yaxis:{title:"success %",range:[0,100]}});
+  }catch(e){toast(e.message);}}
+async function mwStats(){const d=$("mw-dir").value;$("mw-stats").textContent="running scripts/multiworld_stats.py …";
+  try{const r=await api("/api/report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"multiworld_stats",dir:d})});
+    $("mw-stats").textContent=r.out||r.err;}catch(e){$("mw-stats").textContent="error: "+e.message;}}
+function qeSel(){return[...document.querySelectorAll(".qe-cb:checked")].map(c=>({path:c.value,name:c.dataset.name}));}
+async function quickCompare(){const sel=qeSel();if(!sel.length){toast("Tick at least one CSV");return;}
+  const succT=[],cteT=[];
+  for(let i=0;i<sel.length&&i<4;i++){const f=sel[i];
+    const lbl=f.name.split("_")[0].replace(".csv","");const col=C[lbl]||["#9467bd","#8c564b","#e377c2"][i%3];
+    try{const gs=await api(`/api/csv/group?path=${encodeURIComponent(f.path)}&by=terrain_intensity&val=success&nbins=6`);
+      const gc=await api(`/api/csv/group?path=${encodeURIComponent(f.path)}&by=terrain_intensity&val=mean_cte&nbins=6`);
+      succT.push({x:gs.groups.map(g=>g.group),y:gs.groups.map(g=>100*g.mean),type:"bar",name:lbl,marker:{color:col}});
+      cteT.push({x:gc.groups.map(g=>g.group),y:gc.groups.map(g=>g.mean),mode:"lines+markers",name:lbl,line:{color:col,width:2}});
+    }catch(e){toast(f.name+": "+e.message);}}
+  plot("c-qe-succ",succT,{barmode:"group",xaxis:{title:"terrain intensity %"},yaxis:{title:"success %",range:[0,100]}});
+  plot("c-qe-cte",cteT,{xaxis:{title:"terrain intensity %"},yaxis:{title:"mean CTE (m)"}});}
+async function quickReport(){const sel=qeSel();if(!sel.length){toast("Tick at least one CSV");return;}
+  const files={};for(const f of sel){files[f.name.split("_")[0].replace(".csv","")]=f.path;}
+  $("qe-report").textContent="running scripts/eval_report.py …";
+  try{const r=await api("/api/report",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({kind:"eval_report",files})});
+    $("qe-report").textContent=r.out||r.err;}catch(e){$("qe-report").textContent="error: "+e.message;}}
+async function loadCollapse(){const m=$("cl-man").value;
+  try{const D=await api("/api/collapse?manifest="+encodeURIComponent(m));
+    if(!D.rows.length){toast("Manifest has no readable eval dirs on this machine");return;}
+    const H=D.rows.map(r=>r.H);
+    const mk=(key,label)=>["hybrid","lqr","ppo"].filter(c=>D.rows.some(r=>r[c+key]!=null))
+      .map(c=>({x:H,y:D.rows.map(r=>r[c+key]),mode:"lines+markers",name:c,line:{color:C[c],width:2}}));
+    plot("c-cl-succ",mk("_succ"),{xaxis:{title:"harshness multiplier H"},yaxis:{title:"success %",range:[0,100]},
+      shapes:[{type:"line",yref:"y",y0:5,y1:5,xref:"paper",x0:0,x1:1,line:{color:"#999",dash:"dot"}}],
+      annotations:[{xref:"paper",x:.99,y:5,text:"5% collapse line",showarrow:false,font:{size:10,color:"#777"},yanchor:"bottom"}]});
+    plot("c-cl-cte",mk("_cte"),{xaxis:{title:"harshness multiplier H"},yaxis:{title:"mean CTE (m)"}});
+  }catch(e){toast(e.message);}}
+
+/* ================= EXPLORER ================= */
+let exState={path:null,meta:null,offset:0};
+function exNumCols(){return exState.meta?exState.meta.columns.filter(c=>c.numeric).map(c=>c.name):[];}
+function exAllCols(){return exState.meta?exState.meta.columns.map(c=>c.name):[];}
+async function exOpen(){const p=$("ex-path").value.trim()||$("ex-csv").value;if(!p){toast("Pick or paste a CSV path");return;}
+  $("ex-meta").innerHTML=`<span class="spin"></span> reading…`;
+  try{exState.meta=await api("/api/csv/meta?path="+encodeURIComponent(p));exState.path=p;exState.offset=0;
+    $("ex-meta").innerHTML=`<b>${esc(p.split("/").pop())}</b> — ${exState.meta.rows.toLocaleString()} rows · ${exState.meta.columns.length} columns: `+
+      exState.meta.columns.map(c=>`<code title="${c.numeric?`min ${fmt(c.min)} · mean ${fmt(c.mean)} · max ${fmt(c.max)}`:"text"}">${esc(c.name)}</code>`).join(" ");
+    exRenderControls();exTable();exPlot();
+  }catch(e){$("ex-meta").innerHTML=`<span style="color:var(--bad)">${esc(e.message)}</span>`;}}
+$("ex-kind").onchange=exRenderControls;
+function selHtml(id,cols,val){return `<select id="${id}">${cols.map(c=>`<option ${c===val?"selected":""}>${c}</option>`).join("")}</select>`;}
+function exRenderControls(){const k=$("ex-kind").value,n=exNumCols(),a=exAllCols();if(!n.length)return;
+  const d1=n.includes("mean_cte")?"mean_cte":n[0],d2=n.includes("episode")?"episode":n[0];
+  let h="";
+  if(k==="line")h=`<label class="f">Y (one or more, ctrl-click)</label><select id="ex-y" multiple size="5">${n.map(c=>`<option ${c===d1?"selected":""}>${c}</option>`).join("")}</select>
+    <label class="f">X (row order / axis)</label>${selHtml("ex-x",n,d2)}`;
+  else if(k==="scatter")h=`<label class="f">X</label>${selHtml("ex-x",n,n.includes("terrain_intensity")?"terrain_intensity":d2)}<label class="f">Y</label>${selHtml("ex-y1",n,d1)}`;
+  else if(k==="hist")h=`<label class="f">Column</label>${selHtml("ex-y1",n,d1)}<label class="f">Bins</label><input type="number" id="ex-bins" value="40">`;
+  else if(k==="group")h=`<label class="f">Group by</label>${selHtml("ex-x",a,a.includes("path_type")?"path_type":a[0])}<label class="f">Value (mean ± std)</label>${selHtml("ex-y1",n,d1)}<label class="f">Bins (numeric group)</label><input type="number" id="ex-bins" value="8">`;
+  $("ex-controls").innerHTML=h;}
+function exAddFilter(){const n=exAllCols();if(!n.length){toast("Open a CSV first");return;}
+  const d=document.createElement("div");d.className="row";d.style.marginTop="5px";
+  d.innerHTML=`<select class="exf-col" style="width:170px">${n.map(c=>`<option>${c}</option>`).join("")}</select>
+    <input class="exf-min" type="text" placeholder="min (or =value)" style="width:110px"><input class="exf-max" type="text" placeholder="max" style="width:90px">
+    <button class="btn sec small" onclick="this.parentNode.remove()">×</button>`;
+  $("ex-filters").appendChild(d);}
+function exFilters(){const f={};document.querySelectorAll("#ex-filters .row").forEach(r=>{
+  const c=r.querySelector(".exf-col").value,mn=r.querySelector(".exf-min").value.trim(),mx=r.querySelector(".exf-max").value.trim();
+  if(mn.startsWith("="))f[c]=["=",mn.slice(1)];else if(mn!==""||mx!=="")f[c]=[mn===""?null:+mn,mx===""?null:+mx];});return f;}
+async function exPlot(){if(!exState.path)return;const k=$("ex-kind").value,F=encodeURIComponent(JSON.stringify(exFilters()));const p=encodeURIComponent(exState.path);
+  try{
+  if(k==="line"){const ys=[...$("ex-y").selectedOptions].map(o=>o.value);const x=$("ex-x").value;
+    const s=await api(`/api/csv/series?path=${p}&x=${x}&y=${ys.join(",")}&bins=400&filters=${F}`);
+    plot("c-ex",ys.map((c,i)=>({x:s.x,y:s.series[c],mode:"lines",name:c,line:{width:2}})),{xaxis:{title:x},yaxis:{title:ys.length===1?ys[0]:""}});
+    $("ex-title").textContent=ys.join(", ")+" vs "+x;}
+  else if(k==="scatter"){const x=$("ex-x").value,y=$("ex-y1").value;
+    const s=await api(`/api/csv/scatter?path=${p}&x=${x}&y=${y}&cap=4000&filters=${F}`);
+    plot("c-ex",[{x:s.points.map(q=>q[0]),y:s.points.map(q=>q[1]),mode:"markers",marker:{color:C.lqr,size:4,opacity:.45},name:y}],
+      {showlegend:false,xaxis:{title:x},yaxis:{title:y}});
+    $("ex-title").textContent=`${y} vs ${x} (${s.shown.toLocaleString()} of ${s.total.toLocaleString()} pts)`;}
+  else if(k==="hist"){const y=$("ex-y1").value;
+    const h=await api(`/api/csv/hist?path=${p}&col=${y}&bins=${$("ex-bins").value||40}&filters=${F}`);
+    plot("c-ex",[{x:h.edges,y:h.counts,type:"bar",marker:{color:C.hybrid},name:y}],{showlegend:false,bargap:0,xaxis:{title:y},yaxis:{title:"rows"}});
+    $("ex-title").textContent="Distribution of "+y;}
+  else if(k==="group"){const by=$("ex-x").value,val=$("ex-y1").value;
+    const g=await api(`/api/csv/group?path=${p}&by=${by}&val=${val}&nbins=${$("ex-bins").value||8}&filters=${F}`);
+    plot("c-ex",[{x:g.groups.map(x=>x.group),y:g.groups.map(x=>x.mean),error_y:{type:"data",array:g.groups.map(x=>x.std),thickness:1},type:"bar",marker:{color:C.ppo},name:val}],
+      {showlegend:false,xaxis:{title:by},yaxis:{title:"mean "+val}});
+    $("ex-title").textContent=`mean ${val} by ${by} — hover for n`;}
+  exTable();
+  }catch(e){toast(e.message);}}
+async function exTable(){if(!exState.path)return;const F=encodeURIComponent(JSON.stringify(exFilters()));
+  try{const t=await api(`/api/csv/table?path=${encodeURIComponent(exState.path)}&offset=${exState.offset}&limit=40&filters=${F}`);
+    $("ex-table").innerHTML=`<tr>${t.columns.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>`+
+      t.rows.map(r=>`<tr>${r.map(v=>`<td>${fmt(v)}</td>`).join("")}</tr>`).join("");
+    $("ex-pageinfo").textContent=`${t.offset+1}–${Math.min(t.offset+40,t.total)} of ${t.total.toLocaleString()}`;
+    exState.total=t.total;}catch(e){}}
+function exPage(d){exState.offset=Math.max(0,exState.offset+d*40);if(exState.total)exState.offset=Math.min(exState.offset,Math.max(0,exState.total-1));exTable();}
+
+/* ================= FILES ================= */
+let fbPath=null;
+async function fbGo(p){try{const t=await api("/api/tree?path="+encodeURIComponent(p||""));fbPath=t.path;
+  const parts=t.path.split("/").filter(Boolean);let acc="";
+  $("fb-crumbs").innerHTML="/"+parts.map(x=>{acc+="/"+x;const a=acc;return `<a onclick="fbGo('${esc(a)}')">${esc(x)}</a>`;}).join(" / ");
+  $("fb-list").innerHTML=`<div style="margin-bottom:6px"><button class="open" onclick="fbGo('${esc(t.parent)}')">⬑ up</button></div>`+
+    (t.items.length?`<table class="t">${t.items.map(i=>`<tr><td style="width:20px">${i.dir?"📁":"📄"}</td>
+      <td>${i.dir?`<button class="open" onclick="fbGo('${esc(i.path)}')">${esc(i.name)}</button>`:`<button class="open" onclick="fbPreview('${esc(i.path)}','${esc(i.name)}')">${esc(i.name)}</button>`}</td>
+      <td style="color:var(--muted);white-space:nowrap">${i.size??""}</td><td style="color:var(--muted);white-space:nowrap">${esc(i.mtime)}</td></tr>`).join("")}</table>`:`<div class="empty">empty</div>`);
+}catch(e){toast(e.message);}}
+async function fbPreview(p,name){const P=$("fb-preview");const url="/api/file?path="+encodeURIComponent(p);
+  const ext=name.split(".").pop().toLowerCase();
+  const dl=`<div style="margin-top:10px"><a class="btn sec small" href="${url}&dl=1">⬇ download</a></div>`;
+  if(["png","jpg","jpeg","gif","svg"].includes(ext))P.innerHTML=`<h3>${esc(name)}</h3><img src="${url}" style="max-width:100%;border:1px solid var(--line);border-radius:8px">${dl}`;
+  else if(ext==="csv"){P.innerHTML=`<h3>${esc(name)}</h3><div class="sub">CSV — open it properly in the Data explorer.</div><div class="row"><button class="btn small" onclick="gotoExplore('${esc(p)}')">open in explorer</button></div>${dl}`;}
+  else if(ext==="html")P.innerHTML=`<h3>${esc(name)}</h3><div class="sub">Interactive HTML (e.g. a 3-D demo).</div><a class="btn small" href="${url}" target="_blank">open in new tab ↗</a>${dl}`;
+  else if(["txt","log","json","md","yaml","yml","sh","py","tex"].includes(ext)){
+    try{const r=await fetch(url);const tx=await r.text();P.innerHTML=`<h3>${esc(name)}</h3><pre class="report" style="max-height:520px">${esc(tx.slice(0,120000))}${tx.length>120000?"\n…(truncated)":""}</pre>${dl}`;}catch(e){P.innerHTML=esc(e.message);}}
+  else P.innerHTML=`<h3>${esc(name)}</h3><div class="sub">Binary file.</div>${dl}`;}
+
+/* ================= HELP ================= */
+function renderHelp(){$("help-body").innerHTML=`
+<h3 style="margin-top:0">The 60-second tour</h3>
+<p>This dashboard is the whole workflow in one place: <b>Launch</b> starts training or evaluations (same commands as the <code>leo</code> terminal helper) → <b>Live training</b> shows whether it’s learning → <b>Runs</b> holds every checkpoint and diagnostic → <b>Training analysis</b> turns any episodes CSV into the standard research figures → <b>Evaluations</b> is where controllers get compared fairly → <b>Data explorer</b> plots anything vs anything → every chart exports as PNG/SVG (flip on <b>Paper figures</b> in the top bar for publication styling at 4× resolution).</p>
+<h4>Running it / connecting from another machine</h4>
+<p>On the lab box: <code>python3 dashboard/app.py</code> (after <code>git pull</code>). From your laptop or PC: <code>ssh -L 8321:localhost:8321 irl@10.115.102.210</code>, then open <code>http://localhost:8321</code>. You can also run the dashboard directly on Windows against local copies of the data — it just switches to view-only for launching.</p>
+<h4>What the metrics mean</h4>
+<ul>
+<li><b>CTE (cross-track error)</b> — how far off the path the rover is, in metres. Lower is better; <code>mean_cte</code> ≤ 0.2 m is decent tracking, ≥ 0.5 m is bad.</li>
+<li><b>success</b> — the episode reached the goal (within 0.2 m). The CSV success is per-<i>episode</i>; the deterministic <code>[ADR-eval]</code> number in the log is per-<i>rover</i> and is the one to trust (per-episode over-weights fast failures).</li>
+<li><b>path_progress</b> — % of the path completed. &lt;5% = the rover basically parked.</li>
+<li><b>terrain_intensity / friction_intensity</b> — 0–100% difficulty dials. Friction maps to μ = 0.3 + 1.7·(f/100).</li>
+<li><b>mean_slip</b> — wheel slip (0 = clean rolling, 1 = spinning in place). With the soil model on this is true slip.</li>
+<li><b>mean_residual_v/w_norm</b> — how much of its allowed authority the learned residual actually used (hybrid runs only).</li>
+<li><b>Action noise std</b> (live view) — the policy’s exploration. Healthy ≈ 0.2–0.7; a crash to ≈ 0.02 means it froze before learning.</li>
+</ul>
+<h4>Healthy-training cheat sheet</h4>
+<ul>
+<li>success% climbing toward 70–100% ✔ · reward rising from ≈ −200 toward 0+ ✔ · std not collapsed ✔ → let it cook.</li>
+<li>First checkpoint appears at iteration 200. First ~40 iterations show blank reward/success — normal.</li>
+<li>No live 3-D window — the box renders headless on purpose; use <b>trace</b> for a top-down picture, <b>record</b> for a 3-D replay.</li>
+</ul>
+<h4>Fair comparisons (for the paper)</h4>
+<ul>
+<li>Use <b>paired</b> evals: every controller drives identical scenarios (paths, terrain patch, per-wheel friction), so paired t-tests / McNemar apply. <code>scenario_id = −1</code> rows aren’t paired and are dropped.</li>
+<li><b>Multi-world</b> repeats that across fresh terrain seeds — the forest plot is the generalization figure.</li>
+<li>Terrain levels snap to multiples of 20 (6 terrain rows) — that’s why <code>0,20,40,60,80,100</code> everywhere.</li>
+<li>Near collapse, mean CTE is censored (only rovers that move contribute) — quote success%, not CTE.</li>
+<li>Rows with <code>steps &gt; 2000</code> are a known recorder-bug signature; the analysis pages exclude them by default.</li>
+<li>Absolute soil/contact numbers are GPU-driver dependent — compare controllers only on the same stack (the paper notes this).</li>
+</ul>
+<h4>Reward & environment knobs (the ones that matter)</h4>
+<p>The validated fix that made training learn: <code>LEOROVER_W_EFFORT 0.5→0.05</code>, <code>LEOROVER_W_PROGRESS 10→150</code>, <code>LEOROVER_W_SMOOTH 0.5→0.1</code>, <code>LEOROVER_ENT_COEF 0.001→0.005</code>. The Launch page applies these by default; “stock” is the A/B control. Other frequently used knobs: <code>LEOROVER_RES_SCALE</code> (residual authority, 0 = pure LQR), <code>LEOROVER_TERRAIN_SEED</code> (new world), <code>LEOROVER_FRICTION</code> (pin friction), <code>LEOROVER_SOIL_*</code> (soil model coefficients), <code>LEOROVER_TERRAIN_AMP</code> (relief height). The full inventory lives in <code>PROJECT_REFERENCE.md</code>.</p>
+<h4>Where files live</h4>
+<p><code>logs/&lt;experiment&gt;/&lt;timestamp&gt;/</code> — checkpoints (<code>model_*.pt</code>), <code>csv/episode_metrics.csv</code>, TensorBoard events, and diagnostic images · <code>evals/paired/&lt;stamp&gt;/</code> — paired suites · <code>evals/multiworld/&lt;stamp&gt;/world_*/</code> — generalization suites · <code>~/leo_logs/*.log</code> — live console logs. TensorBoard: run <code>leo tb</code> on the box, tunnel port 6006.</p>`;}
+
+/* ================= boot ================= */
+poll().then(()=>{renderLaunchForm();fbGo(STATUS?STATUS.repo:"");renderOverview();});
+</script>
+</body>
+</html>
