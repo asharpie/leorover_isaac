@@ -52,7 +52,7 @@ if (-not (Test-Path $Key)) {
 }
 
 # ---------- 2. make sure the dashboard is running on the lab box ----------
-$ensure = "pgrep -f 'dashboard/app.py' >/dev/null || " +
+$ensure = "pgrep -f '[d]ashboard/app.py' >/dev/null || " +
           "(cd $RemoteDir && mkdir -p ~/leo_logs && " +
           "nohup python3 dashboard/app.py > ~/leo_logs/dashboard.log 2>&1 & sleep 1)"
 ssh -i $Key -o BatchMode=yes -o ConnectTimeout=8 $LabHost $ensure 2>$null
